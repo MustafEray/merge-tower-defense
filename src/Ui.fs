@@ -82,6 +82,22 @@ type Shot =
       Target: float * float
       Ttl: float }
 
+/// What a transient burst effect depicts. The domain value (enemy/tower kind)
+/// is carried rather than a colour, so the palette decision stays in the
+/// render layer and never leaks into this pure module.
+type EffectKind =
+    /// Expanding ring where an enemy of this type was destroyed.
+    | KillBurst of EnemyType
+    /// Flash celebrating a merge that produced a tower of this type.
+    | MergeFlash of TowerType
+
+/// A one-shot animated burst anchored at a cell-unit position, fading over
+/// Ttl seconds. Kept in cell units (never pixels) like the rest of this layer.
+type Effect =
+    { At: float * float
+      Ttl: float
+      Kind: EffectKind }
+
 type UiModel =
     { Game: GameState
       /// Cell currently under the pointer, if any.
@@ -91,7 +107,9 @@ type UiModel =
       /// Transient HUD message with its remaining time-to-live in seconds.
       Notice: (string * float) option
       /// Fading shot tracers for the renderer.
-      Shots: Shot list }
+      Shots: Shot list
+      /// Fading burst effects (kills, merges) for the renderer.
+      Effects: Effect list }
 
 type UiMsg =
     /// Forward a message to the core engine untouched.
@@ -110,7 +128,8 @@ let init (size: GridSize) : UiModel =
       Hover = None
       Pointer = None
       Notice = None
-      Shots = [] }
+      Shots = []
+      Effects = [] }
 
 // ---------------------------------------------------------------------------
 // HUD-facing helpers
@@ -118,6 +137,18 @@ let init (size: GridSize) : UiModel =
 
 let private noticeTtl = 2.5
 let shotTtl = 0.12
+
+// Burst effect lifetimes (seconds). Exposed so the renderer can derive each
+// effect's animation progress without duplicating the constants.
+let killBurstTtl = 0.35
+let mergeFlashTtl = 0.45
+
+/// Total lifetime of an effect, keyed by its kind. Progress in the renderer is
+/// therefore (duration - remaining) / duration.
+let effectDuration =
+    function
+    | KillBurst _ -> killBurstTtl
+    | MergeFlash _ -> mergeFlashTtl
 
 let firstEmptyCell (grid: Grid) : Coord option =
     Grid.coords grid |> List.tryFind (fun c -> Grid.cellAt c grid = Empty)
@@ -174,10 +205,37 @@ let private applyGame (msg: Msg) (model: UiModel) : UiModel =
                       Ttl = shotTtl }
             | _ -> None)
 
+    // Kill bursts anchor where the enemy stood: a killed enemy is already gone
+    // from `game`, so its last position and type come from the pre-update
+    // state. Merge flashes anchor at the merge cell carried by the event.
+    let enemyInfo =
+        model.Game.Enemies
+        |> List.map (fun e -> e.Id, (Enemy.positionOn model.Game.Path e, e.Type))
+        |> Map.ofList
+
+    let newEffects =
+        events
+        |> List.choose (fun event ->
+            match event with
+            | EnemyKilled(id, _) ->
+                enemyInfo
+                |> Map.tryFind id
+                |> Option.map (fun (at, enemyType) ->
+                    { At = at
+                      Ttl = killBurstTtl
+                      Kind = KillBurst enemyType })
+            | TowersMerged(_, _, result, at) ->
+                Some
+                    { At = Coord.center at
+                      Ttl = mergeFlashTtl
+                      Kind = MergeFlash result.Type }
+            | _ -> None)
+
     { model with
         Game = game
         Notice = notice
-        Shots = newShots @ model.Shots }
+        Shots = newShots @ model.Shots
+        Effects = newEffects @ model.Effects }
 
 let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
     match msg with
@@ -216,6 +274,13 @@ let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
                 let ttl' = shot.Ttl - seconds
                 if ttl' <= 0.0 then None else Some { shot with Ttl = ttl' })
 
+        let effects =
+            model.Effects
+            |> List.choose (fun effect ->
+                let ttl' = effect.Ttl - seconds
+                if ttl' <= 0.0 then None else Some { effect with Ttl = ttl' })
+
         { model with
             Notice = notice
-            Shots = shots }
+            Shots = shots
+            Effects = effects }

@@ -45,12 +45,13 @@ let private enemyColor (enemyType: EnemyType) =
 // ---------------------------------------------------------------------------
 
 /// Draw order, bottom to top: static board, overlay (highlights + ranges),
-/// towers, enemies, shot tracers, drag ghost.
+/// towers, enemies, burst effects, shot tracers, drag ghost.
 type Layers =
     { Static: Graphics
       Overlay: Graphics
       Towers: Graphics
       Enemies: Graphics
+      Effects: Graphics
       Shots: Graphics
       Ghost: Graphics }
 
@@ -64,6 +65,7 @@ let createLayers (app: Application) : Layers =
       Overlay = make ()
       Towers = make ()
       Enemies = make ()
+      Effects = make ()
       Shots = make ()
       Ghost = make () }
 
@@ -280,11 +282,58 @@ let private previewColor (preview: DropPreview) =
     | ReturnToOrigin -> 0x90a4ae
     | Blocked -> 0xef5350
 
+/// One transient burst, animated by how far through its lifetime it is:
+/// `grow` climbs 0→1 as the effect ages, `fade` (its complement) drives alpha.
+let private drawEffect (g: Graphics) (layout: Layout) (effect: Effect) : unit =
+    let x, y = toPx layout effect.At
+    let duration = effectDuration effect.Kind
+    let fade = max 0.0 (effect.Ttl / duration) // 1 at spawn → 0 at expiry
+    let grow = 1.0 - fade
+
+    match effect.Kind with
+    | KillBurst enemyType ->
+        // Expanding ring plus a ring of outward-flung sparks.
+        let color = enemyColor enemyType
+        let radius = layout.CellSize * (0.15 + 0.35 * grow)
+
+        g.lineStyle(2.5, color, 0.85 * fade).drawCircle (x, y, radius)
+        |> ignore
+
+        for k in 0 .. 5 do
+            let angle = float k / 6.0 * 2.0 * System.Math.PI
+            let d = radius + 4.0
+
+            g
+                .lineStyle(0.0, 0, 0.0)
+                .beginFill(color, 0.85 * fade)
+                .drawCircle(x + cos angle * d, y + sin angle * d, 2.5 * fade)
+                .endFill ()
+            |> ignore
+
+    | MergeFlash towerType ->
+        // Bright expanding ring with a white sparkle cross at its heart.
+        let color = towerBaseColor towerType
+        let radius = layout.CellSize * (0.2 + 0.5 * grow)
+
+        g.lineStyle(3.0, color, 0.9 * fade).drawCircle (x, y, radius)
+        |> ignore
+
+        let s = layout.CellSize * 0.3 * fade
+
+        g
+            .lineStyle(2.0, 0xffffff, 0.9 * fade)
+            .moveTo(x - s, y)
+            .lineTo(x + s, y)
+            .moveTo(x, y - s)
+            .lineTo(x, y + s)
+        |> ignore
+
 let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     let overlay = layers.Overlay
     overlay.clear () |> ignore
     layers.Towers.clear () |> ignore
     layers.Enemies.clear () |> ignore
+    layers.Effects.clear () |> ignore
     layers.Shots.clear () |> ignore
     layers.Ghost.clear () |> ignore
 
@@ -346,6 +395,10 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     for enemy in model.Game.Enemies do
         let x, y = toPx layout (Enemy.positionOn path enemy)
         drawEnemy layers.Enemies x y enemy
+
+    // Burst effects (kills, merges), fading with their remaining ttl.
+    for effect in model.Effects do
+        drawEffect layers.Effects layout effect
 
     // Shot tracers, fading with their remaining ttl.
     for shot in model.Shots do

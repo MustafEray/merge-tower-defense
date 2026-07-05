@@ -783,6 +783,66 @@ let private uiHudTests () =
          && goldOf restarted.Game = startingGold)
 
 // ---------------------------------------------------------------------------
+// UI layer: transient burst effects (Phase 4 animation)
+// ---------------------------------------------------------------------------
+
+let private uiEffectTests () =
+    let model = init size5
+    let baseModel = { model with Game = noWaves model.Game }
+
+    check "fresh model has no effects" (List.isEmpty model.Effects)
+
+    // A lethal hit leaves a KillBurst anchored where the enemy stood, tagged
+    // with its type (position/type read from the pre-kill state).
+    let withEnemy = updateUi (GameMsg(SpawnEnemy Tank)) baseModel
+    let tank = List.head withEnemy.Game.Enemies
+    let tankPos = Enemy.positionOn withEnemy.Game.Path tank
+    let killed = updateUi (GameMsg(HitEnemy(tank.Id, dmg 9999))) withEnemy
+
+    check "kill spawns a KillBurst effect"
+        (killed.Effects
+         |> List.exists (fun e ->
+             match e.Kind with
+             | KillBurst Tank -> e.At = tankPos
+             | _ -> false))
+
+    // Merging spawns a MergeFlash tagged with the resulting tower type.
+    let merged =
+        [ GameMsg(SpawnTower(Frost, at 2 0))
+          GameMsg(SpawnTower(Frost, at 2 1))
+          GameMsg(StartDrag(at 2 0))
+          GameMsg(Drop(at 2 1)) ]
+        |> List.fold (fun m msg -> updateUi msg m) baseModel
+
+    check "merge spawns a MergeFlash effect"
+        (merged.Effects
+         |> List.exists (fun e ->
+             match e.Kind with
+             | MergeFlash Frost -> true
+             | _ -> false))
+
+    // Non-destructive actions raise no burst.
+    let moved =
+        [ GameMsg(SpawnTower(Archer, at 0 0))
+          GameMsg(StartDrag(at 0 0))
+          GameMsg(Drop(at 4 4)) ]
+        |> List.fold (fun m msg -> updateUi msg m) baseModel
+
+    check "a plain move spawns no effect" (List.isEmpty moved.Effects)
+
+    // Effects fade with injected time and expire (killBurstTtl < 1s).
+    let faded = updateUi (Frame(dt 1.0)) killed
+    check "effects fade out over time" (List.isEmpty faded.Effects)
+
+    // A partial frame keeps the effect but shortens its remaining life.
+    let ticked = updateUi (Frame(dt 0.1)) killed
+    check "a partial frame keeps the effect alive" (not (List.isEmpty ticked.Effects))
+    check "a partial frame shortens the effect's ttl"
+        (match ticked.Effects, killed.Effects with
+         | e' :: _, e :: _ -> e'.Ttl < e.Ttl
+         | _ -> false)
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -804,6 +864,7 @@ let main _argv =
     testStats ()
     uiLayoutTests ()
     uiHudTests ()
+    uiEffectTests ()
 
     printfn ""
     printfn "%d passed, %d failed" passed failed
