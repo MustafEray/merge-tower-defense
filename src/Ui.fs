@@ -1,11 +1,12 @@
-/// Pure UI-layer state for Phase 2: everything the render/HUD layers need
-/// that is not core game logic — canvas layout math, pointer-to-cell hit
-/// testing, HUD placeholders and the frame message that feeds injected
-/// DeltaTime into the core engine.
+/// Pure UI-layer state: everything the render/HUD layers need that is not
+/// core game logic — canvas layout math, pointer-to-cell hit testing, the
+/// transient HUD notice, shot flashes and the frame message that feeds
+/// injected DeltaTime into the core engine.
 ///
 /// This module stays as pure as Shared/State: no DOM, no PixiJS, no clock.
 /// The interop shells (App.fs, Render.fs, Hud.fs) only send UiMsg values and
-/// read the resulting UiModel.
+/// read the resulting UiModel. Since Phase 3 the economy (gold/lives) and
+/// waves live in the core engine; this layer no longer holds placeholders.
 module MergeTowerDefense.Ui
 
 open MergeTowerDefense.Shared
@@ -15,48 +16,48 @@ open MergeTowerDefense.State
 // Canvas layout (pure math, shared by rendering and hit testing)
 // ---------------------------------------------------------------------------
 
-/// Pixel geometry of the play field. Derived from GridSize only, so the
-/// renderer and the pointer hit test can never disagree.
+/// Pixel geometry of the play field. Derived from GridSize and the Path
+/// bounds only, so the renderer and the pointer hit test can never disagree.
+/// GridLeft/GridTop is the pixel position of the grid's top-left corner —
+/// the origin of the cell-unit coordinate system used by Path and Coord.
 type Layout =
     { CanvasWidth: float
       CanvasHeight: float
       GridLeft: float
       GridTop: float
-      CellSize: float
-      /// Vertical centre of the enemy lane strip above the grid. The real
-      /// path geometry arrives in Phase 3; Phase 2 renders PathProgress on
-      /// a straight demo lane.
-      LaneY: float
-      PathLeft: float
-      PathRight: float }
+      CellSize: float }
 
 let private cellSizePx = 72.0
-let private marginPx = 24.0
-let private lanePx = 64.0
-let private laneGapPx = 16.0
+/// Half of the visual width of the enemy lane, in cell units.
+let private laneHalfCells = 0.45
+/// Outer canvas margin, in cell units.
+let private marginCells = 0.3
 
-let layoutFor (size: GridSize) : Layout =
+let layoutFor (size: GridSize) (path: Path) : Layout =
     let n = float (GridSize.value size)
-    let gridSpan = n * cellSizePx
+    let pMinX, pMinY, pMaxX, pMaxY = Path.bounds path
+    let worldMinX = min 0.0 (pMinX - laneHalfCells) - marginCells
+    let worldMinY = min 0.0 (pMinY - laneHalfCells) - marginCells
+    let worldMaxX = max n (pMaxX + laneHalfCells) + marginCells
+    let worldMaxY = max n (pMaxY + laneHalfCells) + marginCells
 
-    { CanvasWidth = marginPx * 2.0 + gridSpan
-      CanvasHeight = marginPx * 2.0 + lanePx + laneGapPx + gridSpan
-      GridLeft = marginPx
-      GridTop = marginPx + lanePx + laneGapPx
-      CellSize = cellSizePx
-      LaneY = marginPx + lanePx / 2.0
-      PathLeft = marginPx
-      PathRight = marginPx + gridSpan }
+    { CanvasWidth = (worldMaxX - worldMinX) * cellSizePx
+      CanvasHeight = (worldMaxY - worldMinY) * cellSizePx
+      GridLeft = -worldMinX * cellSizePx
+      GridTop = -worldMinY * cellSizePx
+      CellSize = cellSizePx }
+
+/// Cell-unit point (the Path/Coord coordinate system) to canvas pixels.
+let toPx (layout: Layout) (point: float * float) : float * float =
+    let x, y = point
+    layout.GridLeft + x * layout.CellSize, layout.GridTop + y * layout.CellSize
 
 /// Centre of a cell in canvas pixels.
-let cellCenter (layout: Layout) (coord: Coord) : float * float =
-    layout.GridLeft + (float (Coord.col coord) + 0.5) * layout.CellSize,
-    layout.GridTop + (float (Coord.row coord) + 0.5) * layout.CellSize
+let cellCenter (layout: Layout) (coord: Coord) : float * float = toPx layout (Coord.center coord)
 
 /// Top-left corner of a cell in canvas pixels.
 let cellOrigin (layout: Layout) (coord: Coord) : float * float =
-    layout.GridLeft + float (Coord.col coord) * layout.CellSize,
-    layout.GridTop + float (Coord.row coord) * layout.CellSize
+    toPx layout (float (Coord.col coord), float (Coord.row coord))
 
 /// Maps a canvas-pixel position to the grid cell under it, if any.
 let cellAtPoint (layout: Layout) (size: GridSize) (x: float) (y: float) : Coord option =
@@ -67,13 +68,19 @@ let cellAtPoint (layout: Layout) (size: GridSize) (x: float) (y: float) : Coord 
         let row = int ((y - layout.GridTop) / layout.CellSize)
         Coord.tryCreate size row col
 
-/// Canvas x of an enemy given its normalised path progress.
-let enemyX (layout: Layout) (progress: PathProgress) : float =
-    layout.PathLeft + PathProgress.value progress * (layout.PathRight - layout.PathLeft)
+/// Visual width of the enemy lane strip in pixels.
+let laneWidthPx (layout: Layout) = 2.0 * laneHalfCells * layout.CellSize
 
 // ---------------------------------------------------------------------------
 // UI model
 // ---------------------------------------------------------------------------
+
+/// A brief tracer for a shot fired this instant (from a tower cell to a
+/// target position in cell units), fading over Ttl seconds.
+type Shot =
+    { FromCell: Coord
+      Target: float * float
+      Ttl: float }
 
 type UiModel =
     { Game: GameState
@@ -81,26 +88,20 @@ type UiModel =
       Hover: Coord option
       /// Raw pointer position in canvas pixels (drives the drag ghost).
       Pointer: (float * float) option
-      /// Placeholder until the Phase 3 economy lands in the core engine.
-      Gold: int
-      /// Placeholder until the Phase 3 wave scheduler lands in the core.
-      Wave: int
-      /// Towers bought so far; drives the deterministic purchase type cycle.
-      Purchases: int
-      /// Accumulated seconds towards the next demo enemy spawn.
-      DemoClock: float
-      /// Demo enemies spawned so far; drives the enemy type cycle.
-      DemoSpawned: int
       /// Transient HUD message with its remaining time-to-live in seconds.
-      Notice: (string * float) option }
+      Notice: (string * float) option
+      /// Fading shot tracers for the renderer.
+      Shots: Shot list }
 
 type UiMsg =
     /// Forward a message to the core engine untouched.
     | GameMsg of Msg
     /// Pointer moved: hovered cell (if any) and raw canvas position.
     | PointerMoved of Coord option * (float * float) option
-    /// HUD "buy tower" button.
-    | BuyTower
+    /// HUD "buy tower" button for the given type.
+    | Buy of TowerType
+    /// HUD restart after a game over.
+    | Restart
     /// One render-loop frame worth of injected time.
     | Frame of DeltaTime
 
@@ -108,52 +109,47 @@ let init (size: GridSize) : UiModel =
     { Game = GameState.create size
       Hover = None
       Pointer = None
-      Gold = 100
-      Wave = 1
-      Purchases = 0
-      DemoClock = 0.0
-      DemoSpawned = 0
-      Notice = None }
+      Notice = None
+      Shots = [] }
 
 // ---------------------------------------------------------------------------
 // HUD-facing helpers
 // ---------------------------------------------------------------------------
 
-let towerCost = 20
-
-let private purchaseCycle = [| Archer; Cannon; Frost |]
-let private demoCycle = [| Grunt; Runner; Tank; Boss |]
-
-/// Seconds between demo enemy spawns. Phase 2 scaffolding only: the real
-/// wave scheduler replaces this in Phase 3.
-let demoSpawnPeriod = 3.0
-
 let private noticeTtl = 2.5
+let shotTtl = 0.12
 
 let firstEmptyCell (grid: Grid) : Coord option =
     Grid.coords grid |> List.tryFind (fun c -> Grid.cellAt c grid = Empty)
 
-let nextPurchaseType (model: UiModel) : TowerType =
-    purchaseCycle.[model.Purchases % purchaseCycle.Length]
-
 let canBuy (model: UiModel) : bool =
-    model.Gold >= towerCost
-    && model.Game.Interaction = Idle
-    && (firstEmptyCell model.Game.Grid |> Option.isSome)
+    match model.Game.Status with
+    | Defeated _ -> false
+    | Playing _ ->
+        model.Game.Interaction = Idle
+        && Gold.value model.Game.Gold >= nextTowerCost model.Game
+        && (firstEmptyCell model.Game.Grid |> Option.isSome)
 
-/// Turns noteworthy game events into a short HUD message. Routine gesture
-/// noise (plain returns, clicks on empty cells) stays silent on purpose.
+/// Turns noteworthy game events into a short HUD message, most important
+/// first. Routine noise (plain returns, per-shot events) stays silent.
+let private noticeOf (event: GameEvent) : (int * string) option =
+    match event with
+    | GameOver waves -> Some(100, sprintf "Game over — you survived %d wave(s)." waves)
+    | ActionRejected(NotEnoughGold required) -> Some(80, sprintf "Not enough gold (need %d)." required)
+    | ActionRejected(MergeAtMaxLevel _) -> Some(80, "Already at max level.")
+    | ActionRejected(IncompatibleTarget _) -> Some(80, "Towers must share type and level to merge.")
+    | ActionRejected(SpawnCellOccupied _) -> Some(80, "That cell is occupied.")
+    | ActionRejected SpawnWhileDragging -> Some(80, "Finish the drag first.")
+    | TowersMerged(_, _, result, _) -> Some(70, sprintf "Merged! New tower is level %d." (TowerLevel.rank result.Level))
+    | WaveCompleted(wave, bonus) -> Some(60, sprintf "Wave %d cleared! +%d gold." wave bonus)
+    | WaveStarted wave -> Some(50, sprintf "Wave %d incoming!" wave)
+    | LifeLost remaining -> Some(40, sprintf "An enemy got through! %d lives left." remaining)
+    | _ -> None
+
 let private noticeFor (events: GameEvent list) : string option =
-    events
-    |> List.tryPick (fun event ->
-        match event with
-        | TowersMerged(_, _, result, _) ->
-            Some(sprintf "Merged! New tower is level %d." (TowerLevel.rank result.Level))
-        | ActionRejected(MergeAtMaxLevel _) -> Some "Already at max level."
-        | ActionRejected(IncompatibleTarget _) -> Some "Towers must share type and level to merge."
-        | ActionRejected(SpawnCellOccupied _) -> Some "That cell is occupied."
-        | ActionRejected SpawnWhileDragging -> Some "Finish the drag before buying."
-        | _ -> None)
+    match events |> List.choose noticeOf with
+    | [] -> None
+    | picks -> picks |> List.maxBy fst |> snd |> Some
 
 // ---------------------------------------------------------------------------
 // UI transition function (pure)
@@ -167,7 +163,21 @@ let private applyGame (msg: Msg) (model: UiModel) : UiModel =
         | Some text -> Some(text, noticeTtl)
         | None -> model.Notice
 
-    { model with Game = game; Notice = notice }
+    let newShots =
+        events
+        |> List.choose (fun event ->
+            match event with
+            | TowerFired(_, origin, target) ->
+                Some
+                    { FromCell = origin
+                      Target = target
+                      Ttl = shotTtl }
+            | _ -> None)
+
+    { model with
+        Game = game
+        Notice = notice
+        Shots = newShots @ model.Shots }
 
 let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
     match msg with
@@ -178,45 +188,34 @@ let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
             Hover = hover
             Pointer = pointer }
 
-    | BuyTower ->
-        if not (canBuy model) then
-            model
-        else
-            match firstEmptyCell model.Game.Grid with
-            | None -> model
-            | Some cell ->
-                let model' = applyGame (SpawnTower(nextPurchaseType model, cell)) model
+    | Buy towerType ->
+        match firstEmptyCell model.Game.Grid with
+        | Some cell -> applyGame (BuyTower(towerType, cell)) model
+        | None ->
+            { model with
+                Notice = Some("No empty cell for a new tower.", noticeTtl) }
 
-                { model' with
-                    Gold = model'.Gold - towerCost
-                    Purchases = model'.Purchases + 1 }
+    | Restart -> init (Grid.size model.Game.Grid)
 
     | Frame dt ->
         let seconds = DeltaTime.seconds dt
 
         // 1. Advance the core simulation with the injected time step.
-        let model = applyGame (AdvanceEnemies dt) model
+        let model = applyGame (Tick dt) model
 
-        // 2. Demo enemy spawner (Phase 2 scaffolding, see demoSpawnPeriod).
-        let clock = model.DemoClock + seconds
-
-        let model =
-            if clock >= demoSpawnPeriod then
-                let enemyType = demoCycle.[model.DemoSpawned % demoCycle.Length]
-
-                applyGame
-                    (SpawnEnemy enemyType)
-                    { model with
-                        DemoClock = clock - demoSpawnPeriod
-                        DemoSpawned = model.DemoSpawned + 1 }
-            else
-                { model with DemoClock = clock }
-
-        // 3. Let the transient HUD notice fade out.
+        // 2. Fade the transient HUD notice and the shot tracers.
         let notice =
             model.Notice
             |> Option.bind (fun (text, ttl) ->
                 let ttl' = ttl - seconds
                 if ttl' <= 0.0 then None else Some(text, ttl'))
 
-        { model with Notice = notice }
+        let shots =
+            model.Shots
+            |> List.choose (fun shot ->
+                let ttl' = shot.Ttl - seconds
+                if ttl' <= 0.0 then None else Some { shot with Ttl = ttl' })
+
+        { model with
+            Notice = notice
+            Shots = shots }

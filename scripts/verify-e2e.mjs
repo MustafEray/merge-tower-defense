@@ -1,8 +1,10 @@
-// End-to-end smoke test for the Phase 2 render/input layer.
+// End-to-end smoke test for the render/input layer and the Phase 3 game
+// systems (waves, combat, economy).
 //
 // Serves the production bundle with `vite preview`, drives it in headless
 // Chromium (playwright-core) and asserts through the window.__MTD_DEBUG hook
-// that buying and drag-merge work through the real Pixi pointer pipeline.
+// that buying, drag-merge, wave spawning and tower fire all work through the
+// real Pixi pointer/ticker pipeline.
 // Usage: npm run verify:e2e   (screenshots land in out/e2e/)
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -10,15 +12,6 @@ import { chromium } from "playwright-core";
 
 const PORT = 4173;
 const SHOTS_DIR = process.env.E2E_SHOTS_DIR ?? "out/e2e";
-
-// Must match Ui.layoutFor: margin 24, lane 64, lane gap 16, cell 72.
-const GRID_LEFT = 24;
-const GRID_TOP = 24 + 64 + 16;
-const CELL = 72;
-const cellCenter = (row, col) => ({
-  x: GRID_LEFT + (col + 0.5) * CELL,
-  y: GRID_TOP + (row + 0.5) * CELL,
-});
 
 const failures = [];
 const assert = (name, condition) => {
@@ -47,7 +40,7 @@ try {
   const browser = await chromium.launch({
     executablePath: "/opt/pw-browsers/chromium",
   });
-  const page = await browser.newPage({ viewport: { width: 900, height: 660 } });
+  const page = await browser.newPage({ viewport: { width: 1000, height: 760 } });
 
   const consoleErrors = [];
   page.on("console", (msg) => {
@@ -57,69 +50,93 @@ try {
 
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForSelector("#game-root canvas");
-  await page.waitForSelector("#buy-tower");
-  await page.waitForTimeout(500);
+  await page.waitForSelector("#buy-archer");
+  await page.waitForTimeout(400);
 
   const debug = () => page.evaluate(() => window.__MTD_DEBUG());
-
-  assert("canvas is mounted", (await page.$("#game-root canvas")) !== null);
-  assert("HUD shows starting gold", (await page.textContent("#hud-gold")) === "100");
-
-  // Buy four towers: purchase cycle is Archer, Cannon, Frost, Archer.
-  for (let i = 0; i < 4; i++) {
-    await page.click("#buy-tower");
-    await page.waitForTimeout(80);
-  }
+  const waitForState = async (name, predicate, timeoutMs) => {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const state = await debug();
+      if (predicate(state)) return state;
+      if (Date.now() > deadline) {
+        assert(name, false);
+        return state;
+      }
+      await page.waitForTimeout(200);
+    }
+  };
 
   let state = await debug();
-  assert("four towers bought", state.towers.length === 4);
-  assert("gold deducted to 20", state.gold === 20);
+  assert("canvas is mounted", (await page.$("#game-root canvas")) !== null);
+  assert("HUD shows starting gold", (await page.textContent("#hud-gold")) === "110");
+  assert("HUD shows starting lives", (await page.textContent("#hud-lives")) === "10");
+  assert("game starts before wave 1", state.wave === 0);
+
+  // The layout comes from the app itself, so pointer math can never drift.
+  const { gridLeft, gridTop, cell } = state.layout;
+  const cellCenter = (row, col) => ({
+    x: gridLeft + (col + 0.5) * cell,
+    y: gridTop + (row + 0.5) * cell,
+  });
+
+  // Buy two archers; costs escalate 20, 24.
+  await page.click("#buy-archer");
+  await page.waitForTimeout(80);
+  await page.click("#buy-archer");
+  await page.waitForTimeout(80);
+
+  state = await debug();
+  assert("two towers bought", state.towers.length === 2);
+  assert("escalating prices charged", state.gold === 110 - 20 - 24);
   assert(
-    "purchase cycle types",
-    JSON.stringify(state.towers.map((t) => t.type)) ===
-      JSON.stringify(["Archer", "Cannon", "Frost", "Archer"])
+    "both towers are archers",
+    state.towers.every((t) => t.type === "Archer" && t.level === 1)
   );
-  assert("buy button still affordable at 20 gold", !(await page.isDisabled("#buy-tower")));
 
-  await page.screenshot({ path: `${SHOTS_DIR}/01-towers-bought.png` });
-
-  // Drag the Archer at (0,0) onto the Archer at (0,3) through real pointer
+  // Drag the Archer at (0,0) onto the Archer at (0,1) through real pointer
   // events on the Pixi canvas.
   const canvas = await page.$("#game-root canvas");
   const box = await canvas.boundingBox();
   const from = cellCenter(0, 0);
-  const to = cellCenter(0, 3);
+  const to = cellCenter(0, 1);
 
   await page.mouse.move(box.x + from.x, box.y + from.y);
   await page.mouse.down();
-  for (let i = 1; i <= 8; i++) {
+  for (let i = 1; i <= 6; i++) {
     await page.mouse.move(
-      box.x + from.x + ((to.x - from.x) * i) / 8,
-      box.y + from.y + ((to.y - from.y) * i) / 8
+      box.x + from.x + ((to.x - from.x) * i) / 6,
+      box.y + from.y + ((to.y - from.y) * i) / 6
     );
     await page.waitForTimeout(30);
   }
-  await page.screenshot({ path: `${SHOTS_DIR}/02-drag-preview.png` });
+  await page.screenshot({ path: `${SHOTS_DIR}/01-drag-preview.png` });
   await page.mouse.up();
   await page.waitForTimeout(150);
 
   state = await debug();
-  assert("merge left three towers", state.towers.length === 3);
-  const merged = state.towers.find((t) => t.row === 0 && t.col === 3);
-  assert("merged tower is a level 2 Archer", merged?.type === "Archer" && merged?.level === 2);
-  assert("origin cell is empty after merge", !state.towers.some((t) => t.row === 0 && t.col === 0));
+  assert("merge left one tower", state.towers.length === 1);
+  assert(
+    "merged tower is a level 2 Archer",
+    state.towers[0]?.type === "Archer" && state.towers[0]?.level === 2
+  );
   assert("drag resolved back to idle", state.dragging === false);
   assert(
     "HUD notice reports the merge",
     (await page.textContent("#hud-notice")).includes("Merged")
   );
 
-  // Demo enemy spawner + ticker-driven movement (injected DeltaTime).
-  await page.waitForTimeout(3500);
-  state = await debug();
-  assert("demo enemy spawned by the loop", state.enemies >= 1);
+  // Wave 1 starts on the scheduler's clock and spawns enemies.
+  state = await waitForState("wave 1 starts", (s) => s.wave >= 1, 8000);
+  state = await waitForState("wave enemies spawn", (s) => s.enemies > 0, 5000);
+  await page.screenshot({ path: `${SHOTS_DIR}/02-wave-active.png` });
 
-  await page.screenshot({ path: `${SHOTS_DIR}/03-merged-and-enemies.png` });
+  // The merged archer covers the path entry: it must earn kill bounties.
+  const goldBefore = state.gold;
+  state = await waitForState("combat earns bounty gold", (s) => s.gold > goldBefore, 20000);
+  assert("still playing", state.status === "playing");
+
+  await page.screenshot({ path: `${SHOTS_DIR}/03-combat.png` });
 
   assert("no console errors", consoleErrors.length === 0);
   if (consoleErrors.length > 0) console.error(consoleErrors.join("\n"));

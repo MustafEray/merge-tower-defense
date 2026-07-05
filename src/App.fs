@@ -22,7 +22,11 @@ let private start () =
         // GridSize.minSize..maxSize.
         | None -> failwith "unreachable: gridSide is a valid grid size"
 
-    let layout = layoutFor size
+    // The path is part of the pure game state; layout is derived from it so
+    // the canvas always contains the whole course. Restart keeps the same
+    // deterministic path, so the layout stays valid for the app's lifetime.
+    let mutable model = init size
+    let layout = layoutFor size model.Game.Path
 
     // --- PixiJS application (WebGL with automatic canvas fallback) --------
     let app =
@@ -36,19 +40,29 @@ let private start () =
     Dom.appendChild (Dom.getElementById "game-root") app.view
 
     let layers = Render.createLayers app
-    Render.drawStatic layout size layers
+    Render.drawStatic layout size model.Game.Path layers
 
     // --- React HUD in its own DOM root -------------------------------------
     let hudRoot = React.createRoot (Dom.getElementById "hud-root")
 
     // --- MVU loop -----------------------------------------------------------
-    // The one mutable cell of the app. Every change flows through the pure
-    // Ui.updateUi; Pixi redraws from the model each frame, React re-renders
-    // only when a HUD-visible value actually changes.
-    let mutable model = init size
-
+    // Every change flows through the pure Ui.updateUi; Pixi redraws from the
+    // model each frame, React re-renders only when a HUD-visible value
+    // actually changes.
     let hudProjection (m: UiModel) =
-        m.Gold, m.Wave, List.length m.Game.Enemies, Option.map fst m.Notice, canBuy m, m.Purchases
+        Gold.value m.Game.Gold,
+        m.Game.Wave.Number,
+        (match m.Game.Wave.Phase with
+         | BetweenWaves s -> int (ceil s)
+         | Spawning _ -> -1
+         | WaveActive -> -2),
+        (match m.Game.Status with
+         | Playing lives -> Lives.value lives
+         | Defeated _ -> -1),
+        List.length m.Game.Enemies,
+        Option.map fst m.Notice,
+        canBuy m,
+        nextTowerCost m.Game
 
     let rec dispatch (msg: UiMsg) : unit =
         let before = hudProjection model
@@ -107,8 +121,8 @@ let private start () =
 
     // --- main loop ----------------------------------------------------------
     // Real elapsed milliseconds from the ticker, converted to a validated
-    // DeltaTime and injected into the core: movement is time-based, never
-    // frame-based.
+    // DeltaTime and injected into the core: movement, waves and combat are
+    // time-based, never frame-based.
     app.ticker.add (fun _ ->
         match DeltaTime.tryCreate (app.ticker.deltaMS / 1000.0) with
         | Some dt -> dispatch (Frame dt)
@@ -123,7 +137,20 @@ let private start () =
     Dom.globalThis?__MTD_DEBUG <-
         fun () ->
             createObj
-                [ "gold", box model.Gold
+                [ "gold", box (Gold.value model.Game.Gold)
+                  "lives",
+                  box (
+                      match model.Game.Status with
+                      | Playing lives -> Lives.value lives
+                      | Defeated _ -> 0
+                  )
+                  "wave", box model.Game.Wave.Number
+                  "status",
+                  box (
+                      match model.Game.Status with
+                      | Playing _ -> "playing"
+                      | Defeated _ -> "defeated"
+                  )
                   "enemies", box (List.length model.Game.Enemies)
                   "dragging",
                   box (
@@ -131,6 +158,11 @@ let private start () =
                       | Dragging _ -> true
                       | Idle -> false
                   )
+                  "layout",
+                  createObj
+                      [ "gridLeft", box layout.GridLeft
+                        "gridTop", box layout.GridTop
+                        "cell", box layout.CellSize ]
                   "towers",
                   box (
                       Grid.towers model.Game.Grid

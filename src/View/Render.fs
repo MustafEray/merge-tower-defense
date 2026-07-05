@@ -1,6 +1,8 @@
 /// Procedural rendering with the PixiJS Graphics API — no external assets.
 /// Pure "view = f(model)": every frame the dynamic layers are cleared and
 /// redrawn from the current UiModel; nothing in here mutates game state.
+/// The enemy lane is drawn from the core's Path geometry, so the picture
+/// can never disagree with the simulation.
 module MergeTowerDefense.View.Render
 
 open MergeTowerDefense.Shared
@@ -43,12 +45,13 @@ let private enemyColor (enemyType: EnemyType) =
 // ---------------------------------------------------------------------------
 
 /// Draw order, bottom to top: static board, overlay (highlights + ranges),
-/// towers, enemies, drag ghost.
+/// towers, enemies, shot tracers, drag ghost.
 type Layers =
     { Static: Graphics
       Overlay: Graphics
       Towers: Graphics
       Enemies: Graphics
+      Shots: Graphics
       Ghost: Graphics }
 
 let createLayers (app: Application) : Layers =
@@ -61,50 +64,93 @@ let createLayers (app: Application) : Layers =
       Overlay = make ()
       Towers = make ()
       Enemies = make ()
+      Shots = make ()
       Ghost = make () }
 
 // ---------------------------------------------------------------------------
-// Static board (drawn once)
+// Shared shape helpers
 // ---------------------------------------------------------------------------
 
-let drawStatic (layout: Layout) (size: GridSize) (layers: Layers) : unit =
+/// Flat vertex list for Graphics.drawPolygon (see the binding for why obj[]).
+let private poly (points: float list) : obj [] =
+    points |> List.map box |> List.toArray
+
+// ---------------------------------------------------------------------------
+// Static board (drawn once; derived from grid size and path geometry)
+// ---------------------------------------------------------------------------
+
+let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) : unit =
     let g = layers.Static
     let n = GridSize.value size
     let cell = layout.CellSize
 
-    // Enemy lane strip with the demo path line (real path geometry: Phase 3).
-    g
-        .beginFill(0x202433, 1.0)
-        .drawRoundedRect(layout.PathLeft, layout.LaneY - 26.0, layout.PathRight - layout.PathLeft, 52.0, 10.0)
-        .endFill ()
-    |> ignore
+    // Enemy lane: a thick strip along the actual Path polyline.
+    let waypointsPx = Path.waypoints path |> List.map (toPx layout)
 
-    g
-        .lineStyle(3.0, 0x3a415f, 1.0)
-        .moveTo(layout.PathLeft + 10.0, layout.LaneY)
-        .lineTo(layout.PathRight - 10.0, layout.LaneY)
-    |> ignore
+    (match waypointsPx with
+     | [] -> ()
+     | (x0, y0) :: rest ->
+         g.lineStyle (laneWidthPx layout, 0x202433, 1.0) |> ignore
+         g.moveTo (x0, y0) |> ignore
 
-    // Direction chevrons along the lane.
-    for i in 0 .. 4 do
-        let x =
-            layout.PathLeft
-            + (float i + 0.5) / 5.0 * (layout.PathRight - layout.PathLeft)
+         for x, y in rest do
+             g.lineTo (x, y) |> ignore
 
-        g
-            .lineStyle(2.0, 0x4c557a, 1.0)
-            .moveTo(x - 4.0, layout.LaneY - 6.0)
-            .lineTo(x + 4.0, layout.LaneY)
-            .lineTo(x - 4.0, layout.LaneY + 6.0)
-        |> ignore
+         // Centre line on top of the strip.
+         g.lineStyle (3.0, 0x3a415f, 1.0) |> ignore
+         g.moveTo (x0, y0) |> ignore
 
-    // Goal marker at the lane exit.
-    g
-        .lineStyle(0.0, 0, 0.0)
-        .beginFill(0xef5350, 0.9)
-        .drawRoundedRect(layout.PathRight - 8.0, layout.LaneY - 18.0, 6.0, 36.0, 2.0)
-        .endFill ()
-    |> ignore
+         for x, y in rest do
+             g.lineTo (x, y) |> ignore)
+
+    // Direction chevrons, sampled along the path at fixed walk distances.
+    let total = Path.length path
+    let chevronEvery = 1.3
+
+    let chevronCount = int (total / chevronEvery)
+
+    for i in 1 .. chevronCount - 1 do
+        let d = float i * chevronEvery
+        let px, py = toPx layout (Path.pointAtDistance path d)
+        let ax, ay = toPx layout (Path.pointAtDistance path (d + 0.3))
+        let dx, dy = ax - px, ay - py
+        let len = sqrt (dx * dx + dy * dy)
+
+        if len > 0.0 then
+            let ux, uy = dx / len, dy / len
+            let vx, vy = -uy, ux // perpendicular
+
+            g
+                .lineStyle(2.0, 0x4c557a, 1.0)
+                .moveTo(px - ux * 4.0 + vx * 5.0, py - uy * 4.0 + vy * 5.0)
+                .lineTo(px + ux * 4.0, py + uy * 4.0)
+                .lineTo(px - ux * 4.0 - vx * 5.0, py - uy * 4.0 - vy * 5.0)
+            |> ignore
+
+    // Spawn portal at the entry, goal marker at the exit.
+    (match waypointsPx with
+     | [] -> ()
+     | (sx, sy) :: _ ->
+         g
+             .lineStyle(3.0, 0x66bb6a, 0.9)
+             .beginFill(0x1a1d29, 1.0)
+             .drawCircle(sx, sy, 13.0)
+             .endFill ()
+         |> ignore)
+
+    (match List.tryLast waypointsPx with
+     | None -> ()
+     | Some(gx, gy) ->
+         g
+             .lineStyle(3.0, 0xef5350, 0.9)
+             .beginFill(0x1a1d29, 1.0)
+             .drawCircle(gx, gy, 13.0)
+             .endFill()
+             .lineStyle(0.0, 0, 0.0)
+             .beginFill(0xef5350, 0.9)
+             .drawCircle(gx, gy, 5.0)
+             .endFill ()
+         |> ignore)
 
     // Checkerboard grid cells.
     for row in 0 .. n - 1 do
@@ -121,12 +167,8 @@ let drawStatic (layout: Layout) (size: GridSize) (layers: Layers) : unit =
             |> ignore
 
 // ---------------------------------------------------------------------------
-// Shared shape helpers
+// Shape helpers shared by placed towers and the drag ghost
 // ---------------------------------------------------------------------------
-
-/// Flat vertex list for Graphics.drawPolygon (see the binding for why obj[]).
-let private poly (points: float list) : obj [] =
-    points |> List.map box |> List.toArray
 
 /// Draws one tower, fully procedurally: shape encodes the type, size/shade
 /// encode the level, and white pips repeat the level for colour-blind
@@ -200,9 +242,11 @@ let private drawEnemy (g: Graphics) (x: float) (y: float) (enemy: Enemy) : unit 
              .drawCircle(x, y, 19.0))
     |> ignore
 
-    // Health bar: current / type base health.
+    // Health bar: current versus the type's unscaled base (waves scale
+    // health up, so late-wave enemies can show a "over-full" bar clamped
+    // to the bar width).
     let fraction =
-        float (Health.value enemy.Health) / float (EnemyType.baseHealth enemy.Type)
+        min 1.0 (float (Health.value enemy.Health) / float (EnemyType.baseHealth enemy.Type))
 
     let barWidth = 26.0
     let barY = y - 24.0
@@ -241,9 +285,11 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     overlay.clear () |> ignore
     layers.Towers.clear () |> ignore
     layers.Enemies.clear () |> ignore
+    layers.Shots.clear () |> ignore
     layers.Ghost.clear () |> ignore
 
     let cell = layout.CellSize
+    let path = model.Game.Path
 
     // Drag feedback: origin outline + drop preview highlight on the hovered
     // cell, colour-coded by what previewDrop says would happen.
@@ -296,9 +342,26 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
         let x, y = cellCenter layout coord
         drawTowerShape layers.Towers x y tower 1.0
 
-    // Enemies on the demo lane.
+    // Enemies along the path.
     for enemy in model.Game.Enemies do
-        drawEnemy layers.Enemies (enemyX layout enemy.Progress) layout.LaneY enemy
+        let x, y = toPx layout (Enemy.positionOn path enemy)
+        drawEnemy layers.Enemies x y enemy
+
+    // Shot tracers, fading with their remaining ttl.
+    for shot in model.Shots do
+        let fx, fy = cellCenter layout shot.FromCell
+        let tx, ty = toPx layout shot.Target
+        let alpha = 0.9 * (shot.Ttl / shotTtl)
+
+        layers.Shots
+            .lineStyle(2.0, 0xfff59d, alpha)
+            .moveTo(fx, fy)
+            .lineTo(tx, ty)
+            .lineStyle(0.0, 0, 0.0)
+            .beginFill(0xfff59d, alpha)
+            .drawCircle(tx, ty, 3.5)
+            .endFill ()
+        |> ignore
 
     // Drag ghost follows the raw pointer position.
     match model.Game.Interaction, model.Pointer with

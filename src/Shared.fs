@@ -36,6 +36,71 @@ module EnemyIdGen =
     let next (EnemyIdGen n) = EnemyId n, EnemyIdGen(n + 1)
 
 // ---------------------------------------------------------------------------
+// Combat primitives
+// ---------------------------------------------------------------------------
+
+/// Strictly positive damage.
+type Damage = private Damage of int
+
+module Damage =
+    let tryCreate n = if n > 0 then Some(Damage n) else None
+    let value (Damage n) = n
+
+/// Strictly positive hit points. "Alive with zero or negative HP" has no
+/// representation; death is an explicit outcome of applyDamage, not a flag.
+type Health = private Health of int
+
+module Health =
+    let tryCreate n = if n > 0 then Some(Health n) else None
+    let value (Health n) = n
+
+type AttackResult =
+    | Survived of Health
+    | Killed
+
+module AttackResult =
+    let ofDamage (Damage dmg) (Health hp) =
+        let remaining = hp - dmg
+        if remaining > 0 then Survived(Health remaining) else Killed
+
+// ---------------------------------------------------------------------------
+// Economy primitives (Phase 3)
+// ---------------------------------------------------------------------------
+
+/// Non-negative gold balance: debt is unrepresentable. Spending is a
+/// fallible operation, earning is total.
+type Gold = private Gold of int
+
+module Gold =
+    let zero = Gold 0
+    let value (Gold n) = n
+
+    /// Adds a non-negative amount (negative amounts are ignored).
+    let earn (amount: int) (Gold n) = Gold(n + max 0 amount)
+
+    /// None when the price exceeds the balance.
+    let trySpend (price: int) (Gold n) =
+        if price >= 0 && price <= n then Some(Gold(n - price)) else None
+
+/// Strictly positive life counter. "Playing with zero lives" has no
+/// representation: running out is the explicit AllLost transition, which the
+/// state machine turns into the Defeated status.
+type Lives = private Lives of int
+
+type LivesResult =
+    | StillAlive of Lives
+    | AllLost
+
+module Lives =
+    /// Total constructor: clamps to at least one life.
+    let create (n: int) = Lives(max 1 n)
+    let value (Lives n) = n
+
+    let lose (amount: int) (Lives n) =
+        let remaining = n - max 0 amount
+        if remaining > 0 then StillAlive(Lives remaining) else AllLost
+
+// ---------------------------------------------------------------------------
 // Towers
 // ---------------------------------------------------------------------------
 
@@ -78,10 +143,14 @@ type TowerType =
 type Tower =
     { Id: TowerId
       Type: TowerType
-      Level: TowerLevel }
+      Level: TowerLevel
+      /// Seconds until the tower may fire again. State.update keeps this
+      /// non-negative; fresh and freshly merged towers start ready (0.0).
+      Cooldown: float }
 
 type TowerStats =
     { Damage: int
+      /// Attack radius in cell units.
       Range: float
       CooldownMs: int }
 
@@ -101,6 +170,10 @@ module Tower =
         { b with
             Damage = b.Damage * pown 2 (r - 1)
             Range = b.Range + 0.25 * float (r - 1) }
+
+    /// Attack damage as a validated Damage value. Total by construction:
+    /// base damages are strictly positive and doubling keeps them positive.
+    let attackDamage (tower: Tower) : Damage = Damage((stats tower).Damage)
 
     /// Two towers merge iff they are distinct, same type and same level, and
     /// below the ceiling. Returns the level the merged tower would have.
@@ -145,6 +218,10 @@ module Coord =
     let row c = c.Row
     let col c = c.Col
 
+    /// Cell centre in cell units — the coordinate system shared with Path:
+    /// the grid's top-left corner is (0,0) and one unit is one cell edge.
+    let center (c: Coord) : float * float = float c.Col + 0.5, float c.Row + 0.5
+
 type CellState =
     | Empty
     | Occupied of Tower
@@ -173,7 +250,8 @@ module Grid =
         [ for r in 0 .. n - 1 do
               for c in 0 .. n - 1 -> { Row = r; Col = c } ]
 
-    /// All towers on the board with their coordinates.
+    /// All towers on the board with their coordinates, in deterministic
+    /// (coordinate) order.
     let towers grid = Map.toList grid.Towers
 
     let towerCount grid = Map.count grid.Towers
@@ -181,6 +259,12 @@ module Grid =
     let isFull grid =
         let n = GridSize.value grid.Size
         Map.count grid.Towers = n * n
+
+    /// Cell-preserving update of every tower on the board (used for combat
+    /// cooldown bookkeeping; must not touch identity or placement).
+    let mapTowers (f: Tower -> Tower) grid =
+        { grid with
+            Towers = Map.map (fun _ tower -> f tower) grid.Towers }
 
     /// Place a tower on an EMPTY cell. An occupied target yields None, so
     /// silently overwriting (losing) a tower is unrepresentable.
@@ -205,35 +289,7 @@ module Grid =
         | None -> None
 
 // ---------------------------------------------------------------------------
-// Combat primitives
-// ---------------------------------------------------------------------------
-
-/// Strictly positive damage.
-type Damage = private Damage of int
-
-module Damage =
-    let tryCreate n = if n > 0 then Some(Damage n) else None
-    let value (Damage n) = n
-
-/// Strictly positive hit points. "Alive with zero or negative HP" has no
-/// representation; death is an explicit outcome of applyDamage, not a flag.
-type Health = private Health of int
-
-module Health =
-    let tryCreate n = if n > 0 then Some(Health n) else None
-    let value (Health n) = n
-
-type AttackResult =
-    | Survived of Health
-    | Killed
-
-module AttackResult =
-    let ofDamage (Damage dmg) (Health hp) =
-        let remaining = hp - dmg
-        if remaining > 0 then Survived(Health remaining) else Killed
-
-// ---------------------------------------------------------------------------
-// Time and movement
+// Time, movement and path geometry
 // ---------------------------------------------------------------------------
 
 /// A positive, finite time step in seconds. Time is always injected from the
@@ -258,9 +314,85 @@ module PathProgress =
     let start = PathProgress 0.0
     let value (PathProgress p) = p
 
+    let tryCreate (fraction: float) =
+        if fraction >= 0.0 && fraction < 1.0 && not (System.Double.IsNaN fraction) then
+            Some(PathProgress fraction)
+        else
+            None
+
 type MoveResult =
     | Moved of PathProgress
     | ReachedGoal
+
+/// The polyline enemies walk, in cell units: the grid's top-left corner is
+/// (0,0), one unit is one cell edge and cell (row, col) has its centre at
+/// (col + 0.5, row + 0.5). Kept abstract from pixels so the core never
+/// learns about the canvas. Guaranteed non-degenerate (≥ 2 finite points,
+/// positive total length) by construction.
+type Path =
+    private
+        { Points: (float * float) list
+          Segments: ((float * float) * (float * float) * float) list
+          Total: float }
+
+module Path =
+    let private build points =
+        let segments =
+            List.pairwise points
+            |> List.map (fun ((x1, y1), (x2, y2)) ->
+                let dx = x2 - x1
+                let dy = y2 - y1
+                (x1, y1), (x2, y2), sqrt (dx * dx + dy * dy))
+
+        { Points = points
+          Segments = segments
+          Total = segments |> List.sumBy (fun (_, _, len) -> len) }
+
+    let tryCreate (points: (float * float) list) : Path option =
+        let finite v =
+            not (System.Double.IsNaN v) && abs v < infinity
+
+        if List.length points < 2
+           || not (points |> List.forall (fun (x, y) -> finite x && finite y)) then
+            None
+        else
+            let path = build points
+            if path.Total > 0.0 then Some path else None
+
+    /// Total length in cell units.
+    let length (path: Path) = path.Total
+
+    let waypoints (path: Path) = path.Points
+
+    /// Axis-aligned bounds of the polyline: minX, minY, maxX, maxY.
+    let bounds (path: Path) =
+        let xs = path.Points |> List.map fst
+        let ys = path.Points |> List.map snd
+        List.min xs, List.min ys, List.max xs, List.max ys
+
+    /// Point at a walked distance (clamped to the path ends).
+    let pointAtDistance (path: Path) (distance: float) : float * float =
+        let rec walk travelled segments =
+            match segments with
+            | [] -> List.last path.Points
+            | ((x1, y1), (x2, y2), len) :: rest ->
+                if distance <= travelled + len && len > 0.0 then
+                    let t = max 0.0 ((distance - travelled) / len)
+                    x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+                else
+                    walk (travelled + len) rest
+
+        walk 0.0 path.Segments
+
+    /// Point in cell units at a normalised progress.
+    let positionAt (path: Path) (progress: PathProgress) : float * float =
+        pointAtDistance path (PathProgress.value progress * path.Total)
+
+    /// Default course: in from the top-left, along the grid's top edge, then
+    /// down its right flank to the goal at the bottom-right.
+    let defaultFor (size: GridSize) : Path =
+        let n = float (GridSize.value size)
+        build [ -0.9, -0.9; n + 0.9, -0.9; n + 0.9, n + 0.5 ]
 
 // ---------------------------------------------------------------------------
 // Enemies
@@ -274,7 +406,7 @@ type EnemyType =
 
 module EnemyType =
     /// Base hit points per type. Values must stay strictly positive: they
-    /// feed the private Health constructor in Enemy.spawn.
+    /// feed the private Health constructor in Enemy.spawnWith.
     let baseHealth =
         function
         | Grunt -> 20
@@ -282,13 +414,29 @@ module EnemyType =
         | Tank -> 60
         | Boss -> 250
 
-    /// Path fraction travelled per second.
+    /// Movement speed in cells per second.
     let speed =
         function
-        | Grunt -> 0.08
-        | Runner -> 0.16
-        | Tank -> 0.05
-        | Boss -> 0.03
+        | Grunt -> 0.9
+        | Runner -> 1.8
+        | Tank -> 0.55
+        | Boss -> 0.45
+
+    /// Gold awarded when the enemy is killed.
+    let bounty =
+        function
+        | Grunt -> 4
+        | Runner -> 6
+        | Tank -> 12
+        | Boss -> 50
+
+    /// Lives lost when the enemy reaches the goal.
+    let livesCost =
+        function
+        | Grunt -> 1
+        | Runner -> 1
+        | Tank -> 2
+        | Boss -> 3
 
 type Enemy =
     { Id: EnemyId
@@ -297,18 +445,32 @@ type Enemy =
       Progress: PathProgress }
 
 module Enemy =
-    /// Spawns at the path start with full, type-defined health.
-    let spawn (gen: EnemyIdGen) (enemyType: EnemyType) : Enemy * EnemyIdGen =
+    /// Spawns at the path start; health = type base × multiplier, kept ≥ 1
+    /// so the private Health constructor stays valid.
+    let spawnWith (gen: EnemyIdGen) (enemyType: EnemyType) (healthMultiplier: float) : Enemy * EnemyIdGen =
         let id, gen' = EnemyIdGen.next gen
+
+        let hp =
+            max 1 (int (round (float (EnemyType.baseHealth enemyType) * healthMultiplier)))
 
         { Id = id
           Type = enemyType
-          Health = Health(EnemyType.baseHealth enemyType)
+          Health = Health hp
           Progress = PathProgress.start },
         gen'
 
-    /// Pure movement step; the caller decides what ReachedGoal means.
-    let advance (dt: DeltaTime) (enemy: Enemy) : MoveResult =
+    let spawn (gen: EnemyIdGen) (enemyType: EnemyType) : Enemy * EnemyIdGen = spawnWith gen enemyType 1.0
+
+    /// Time-based movement along the path (speed is cells per second, so
+    /// the progress delta is normalised by the path length).
+    let advance (path: Path) (dt: DeltaTime) (enemy: Enemy) : MoveResult =
         let (PathProgress p) = enemy.Progress
-        let p' = p + EnemyType.speed enemy.Type * DeltaTime.seconds dt
+
+        let p' =
+            p
+            + EnemyType.speed enemy.Type * DeltaTime.seconds dt / Path.length path
+
         if p' >= 1.0 then ReachedGoal else Moved(PathProgress p')
+
+    /// Current position in cell units.
+    let positionOn (path: Path) (enemy: Enemy) : float * float = Path.positionAt path enemy.Progress

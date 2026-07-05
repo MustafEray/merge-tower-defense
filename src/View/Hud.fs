@@ -1,7 +1,7 @@
-/// React HUD layer: gold / wave / enemy readouts, the buy button and the
-/// transient notice line. Lives in its own DOM root (#hud-root), completely
-/// isolated from the Pixi canvas — it only receives UiModel snapshots and
-/// emits UiMsg values through dispatch.
+/// React HUD layer: gold / wave / lives / enemy readouts, per-type buy
+/// buttons, the transient notice line and the game-over panel. Lives in its
+/// own DOM root (#hud-root), completely isolated from the Pixi canvas — it
+/// only receives UiModel snapshots and emits UiMsg values through dispatch.
 module MergeTowerDefense.View.Hud
 
 open MergeTowerDefense.Shared
@@ -15,24 +15,59 @@ let private stat (id: string) (label: string) (value: string) =
         [ span [ "className", box "hud-stat-label" ] [ str label ]
           span [ "className", box "hud-stat-value"; "id", box id ] [ str value ] ]
 
+let private waveLabel (game: GameState) =
+    match game.Status with
+    | Defeated waves -> sprintf "%d survived" waves
+    | Playing _ ->
+        match game.Wave.Phase with
+        | BetweenWaves seconds -> sprintf "%d — next in %.0fs" game.Wave.Number (ceil seconds)
+        | Spawning _
+        | WaveActive -> string game.Wave.Number
+
+let private livesLabel (game: GameState) =
+    match game.Status with
+    | Playing lives -> string (Lives.value lives)
+    | Defeated _ -> "0"
+
+let private buyButton (model: UiModel) (dispatch: UiMsg -> unit) (towerType: TowerType) =
+    let name = string towerType
+
+    button
+        [ "id", box (sprintf "buy-%s" (name.ToLowerInvariant()))
+          "className", box (sprintf "hud-buy hud-buy-%s" (name.ToLowerInvariant()))
+          "disabled", box (not (canBuy model))
+          "onClick", box (fun (_: obj) -> dispatch (Buy towerType)) ]
+        [ str (sprintf "%s — %dg" name (nextTowerCost model.Game)) ]
+
 let view (model: UiModel) (dispatch: UiMsg -> unit) =
-    let buyLabel =
-        sprintf "Buy %s Tower (%d gold)" (string (nextPurchaseType model)) towerCost
+    let gameOver =
+        match model.Game.Status with
+        | Defeated waves ->
+            div
+                [ "className", box "hud-gameover"; "id", box "hud-gameover" ]
+                [ span [] [ str (sprintf "Game Over — you survived %d wave(s)." waves) ]
+                  button
+                      [ "id", box "restart"
+                        "className", box "hud-restart"
+                        "onClick", box (fun (_: obj) -> dispatch Restart) ]
+                      [ str "Restart" ] ]
+        | Playing _ -> nothing
 
     div
         [ "className", box "hud" ]
         [ h1 [ "className", box "hud-title" ] [ str "Merge Tower Defense" ]
           div
               [ "className", box "hud-stats" ]
-              [ stat "hud-gold" "Gold" (string model.Gold)
-                stat "hud-wave" "Wave" (string model.Wave)
+              [ stat "hud-gold" "Gold" (string (Gold.value model.Game.Gold))
+                stat "hud-wave" "Wave" (waveLabel model.Game)
+                stat "hud-lives" "Lives" (livesLabel model.Game)
                 stat "hud-enemies" "Enemies" (string (List.length model.Game.Enemies)) ]
-          button
-              [ "id", box "buy-tower"
-                "className", box "hud-buy"
-                "disabled", box (not (canBuy model))
-                "onClick", box (fun (_: obj) -> dispatch BuyTower) ]
-              [ str buyLabel ]
+          div
+              [ "className", box "hud-shop" ]
+              [ buyButton model dispatch Archer
+                buyButton model dispatch Cannon
+                buyButton model dispatch Frost ]
+          gameOver
           div
               [ "className", box "hud-notice"; "id", box "hud-notice" ]
               [ match model.Notice with

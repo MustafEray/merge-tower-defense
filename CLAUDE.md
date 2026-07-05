@@ -61,10 +61,17 @@ olmadan geçilmez.
   bağımsızdır. Demo düşman üreteci (`Ui.demoSpawnPeriod`) Aşama 3'teki
   dalga planlayıcının iskele kodudur.
 
-### Aşama 3 — Oyun Sistemleri (Gün 8–10)
+### Aşama 3 — Oyun Sistemleri (Gün 8–10) ✅ TAMAMLANDI
 
-- Dalga planlayıcı (wave scheduler), yol (path) geometrisi, kule hedefleme ve
-  atış döngüsü, ekonomi (altın/can), zorluk eğrisi.
+- Dalga planlayıcı (`WavePhase`: BetweenWaves → Spawning → WaveActive;
+  spawn kredisi sayesinde tick granülaritesinden bağımsız), yol geometrisi
+  (`Path`: hücre biriminde polyline; varsayılan rota üst kenar + sağ kanat),
+  kule hedefleme/atış döngüsü ("first" hedefleme, cooldown, menzil), ekonomi
+  (`Gold`/`Lives` doğrulanmış tipleri, kule fiyat artışı, bounty + dalga
+  bonusu) ve zorluk eğrisi (`Waves` modülü: kompozisyon, can çarpanı,
+  spawn aralığı). Oyun sonu: `GameStatus = Playing of Lives | Defeated`.
+- Aşama 2'nin UI placeholder'ları (altın/dalga) ve demo düşman üreteci
+  kaldırıldı; ekonomi ve dalgalar artık çekirdekte.
 
 ### Aşama 4 — Cila (Gün 11–12)
 
@@ -79,9 +86,9 @@ olmadan geçilmez.
 
 | Dosya | İçerik |
 |---|---|
-| `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType`, `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `DeltaTime`, `PathProgress`, `EnemyType`, `Enemy` ve saf yardımcıları |
-| `src/State.fs` | Durum makinesi: `Interaction` (Idle/Dragging), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, `update` |
-| `src/Ui.fs` | Saf UI katmanı: `Layout` (canvas geometrisi + hit test), `UiModel`, `UiMsg`, `updateUi`, HUD placeholder'ları, demo düşman üreteci |
+| `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType`, `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `Gold`, `Lives`, `DeltaTime`, `PathProgress`, `Path`, `EnemyType`, `Enemy` ve saf yardımcıları |
+| `src/State.fs` | Durum makinesi: `Interaction`, `WavePhase`/`WaveState`, `GameStatus`, `Waves` (zorluk eğrisi), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, tick hattı (dalga→hareket/can→savaş→dalga sonu), `update` |
+| `src/Ui.fs` | Saf UI katmanı: `Layout` (path sınırlarından türetilen canvas geometrisi + hit test), `UiModel` (hover/ghost/notice/atış izleri), `UiMsg`, `updateUi` |
 | `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri (yalnızca kullanılan yüzey) |
 | `src/Interop/React.fs` | Minimal React 18 binding'leri + Feliz-vari HTML DSL |
 | `src/Interop/Dom.fs` | Üç DOM dokunuşu (getElementById/appendChild/globalThis) |
