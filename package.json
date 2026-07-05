@@ -1,0 +1,18 @@
+{
+  "name": "merge-tower-defense",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Merge Tower Defense — pure F# core compiled to JS with Fable",
+  "type": "module",
+  "scripts": {
+    "postinstall": "node scripts/patch-fable-toolchain.mjs",
+    "build:tests": "fable tests/Tests.fsproj out/tests",
+    "test": "npm run build:tests && node out/tests/Tests.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "dirname-filename-esm": "^1.1.2",
+    "fable-compiler-js": "^3.3.0",
+    "fable-standalone": "3.7.0"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+out/
+bin/
+obj/
+.fable/
+fable_modules/
+*.fs.js
+.DS_Store
