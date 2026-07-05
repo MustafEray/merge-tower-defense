@@ -8,6 +8,7 @@ module MergeTowerDefense.Tests
 
 open MergeTowerDefense.Shared
 open MergeTowerDefense.State
+open MergeTowerDefense.Ui
 
 let mutable private passed = 0
 let mutable private failed = 0
@@ -444,6 +445,87 @@ let private testStats () =
     check "same tower cannot merge with itself" (Tower.canMerge archer1 archer1 = None)
 
 // ---------------------------------------------------------------------------
+// UI layer (Phase 2): layout math, hit testing, HUD transitions
+// ---------------------------------------------------------------------------
+
+let private uiLayoutTests () =
+    let layout = layoutFor size5
+
+    // cellAtPoint must be the exact inverse of cellCenter on every cell.
+    let allRoundTrip =
+        GameState.create size5
+        |> fun s -> Grid.coords s.Grid
+        |> List.forall (fun coord ->
+            let x, y = cellCenter layout coord
+            cellAtPoint layout size5 x y = Some coord)
+
+    check "cellAtPoint inverts cellCenter on every cell" allRoundTrip
+    check "point left of grid maps to no cell" (cellAtPoint layout size5 (layout.GridLeft - 5.0) layout.GridTop = None)
+    check "point above grid maps to no cell" (cellAtPoint layout size5 layout.GridLeft (layout.GridTop - 5.0) = None)
+    check "point past last cell maps to no cell"
+        (cellAtPoint layout size5 (layout.GridLeft + 5.0 * layout.CellSize + 1.0) (layout.GridTop + 1.0) = None)
+
+    check "enemy at path start renders at lane left"
+        (let e, _ = Enemy.spawn EnemyIdGen.initial Grunt
+         enemyX layout e.Progress = layout.PathLeft)
+
+let private uiHudTests () =
+    let model = init size5
+
+    // Buying: deterministic type cycle, first empty cell, gold decrement.
+    let m1 = updateUi BuyTower model
+    check "buy places a tower on the first empty cell"
+        (match Grid.cellAt (at 0 0) m1.Game.Grid with
+         | Occupied t -> t.Type = Archer && t.Level = Level1
+         | Empty -> false)
+    check "buy deducts gold" (m1.Gold = model.Gold - towerCost)
+
+    let m2 = updateUi BuyTower m1
+    check "second buy cycles to the next type"
+        (match Grid.cellAt (at 0 1) m2.Game.Grid with
+         | Occupied t -> t.Type = Cannon
+         | Empty -> false)
+
+    check "buy without enough gold is a no-op"
+        (let poor = { m2 with Gold = towerCost - 1 }
+         updateUi BuyTower poor = poor)
+
+    check "cannot buy while dragging"
+        (let dragging = updateUi (GameMsg(StartDrag(at 0 0))) m2
+         canBuy dragging = false)
+
+    // Frame: advances enemies with injected time and runs the demo spawner.
+    let stepped =
+        updateUi (Frame(dt 1.0)) { model with Game = fst (update (SpawnEnemy Grunt) model.Game) }
+
+    check "frame advances enemy progress"
+        (match stepped.Game.Enemies with
+         | [ e ] -> PathProgress.value e.Progress > 0.0
+         | _ -> false)
+
+    let afterDemo =
+        [ 1 .. 4 ] |> List.fold (fun m _ -> updateUi (Frame(dt 1.0)) m) model
+
+    check "demo spawner emits an enemy after its period"
+        (List.length afterDemo.Game.Enemies >= 1)
+
+    // Notices: set by noteworthy events, silent otherwise, and they expire.
+    let mismatch =
+        [ GameMsg(SpawnTower(Archer, at 3 0))
+          GameMsg(SpawnTower(Cannon, at 3 1))
+          GameMsg(StartDrag(at 3 0))
+          GameMsg(Drop(at 3 1)) ]
+        |> List.fold (fun m msg -> updateUi msg m) model
+
+    check "incompatible merge raises a HUD notice" (mismatch.Notice |> Option.isSome)
+    check "notice expires after its time-to-live"
+        (let faded = [ 1 .. 4 ] |> List.fold (fun m _ -> updateUi (Frame(dt 1.0)) m) mismatch
+         faded.Notice = None)
+
+    check "plain pointer movement raises no notice"
+        ((updateUi (PointerMoved(Some(at 1 1), Some(10.0, 10.0))) model).Notice = None)
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -458,6 +540,8 @@ let main _argv =
     testEnemies ()
     testImmutability ()
     testStats ()
+    uiLayoutTests ()
+    uiHudTests ()
 
     printfn ""
     printfn "%d passed, %d failed" passed failed

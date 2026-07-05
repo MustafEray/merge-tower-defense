@@ -7,12 +7,24 @@
   "scripts": {
     "postinstall": "node scripts/patch-fable-toolchain.mjs",
     "build:tests": "fable tests/Tests.fsproj out/tests",
-    "test": "npm run build:tests && node out/tests/Tests.js"
+    "test": "npm run build:tests && node out/tests/Tests.js",
+    "build:app": "fable src/MergeTowerDefense.fsproj out/app",
+    "dev": "npm run build:app && vite",
+    "build": "npm run build:app && vite build",
+    "preview": "vite preview",
+    "verify:e2e": "npm run build && node scripts/verify-e2e.mjs"
   },
   "license": "MIT",
   "devDependencies": {
     "dirname-filename-esm": "^1.1.2",
     "fable-compiler-js": "^3.3.0",
-    "fable-standalone": "3.7.0"
+    "fable-standalone": "3.7.0",
+    "playwright-core": "^1.61.1",
+    "vite": "^5.4.21"
+  },
+  "dependencies": {
+    "pixi.js": "^7.4.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }

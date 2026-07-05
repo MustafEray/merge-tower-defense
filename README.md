@@ -4,17 +4,21 @@ Sürükle-bırak ile aynı seviyedeki kuleleri birleştirerek (merge) savunma
 yapılan, F# + Fable ile yazılan bir tower defense oyunu.
 
 Mimari, faz planı ve kodlama kuralları için [CLAUDE.md](CLAUDE.md) dosyasına
-bakın. Şu an **Aşama 1 (Çekirdek Durum Motoru)** tamamlanmış durumdadır:
-`src/Shared.fs` ve `src/State.fs` saf oyun mantığını içerir; render (PixiJS)
-ve mobil paketleme sonraki fazlardadır.
+bakın. **Aşama 1 (Çekirdek Durum Motoru)** ve **Aşama 2 (Render ve Girdi)**
+tamamlandı: saf F# çekirdeği (`src/Shared.fs`, `src/State.fs`, `src/Ui.fs`)
+PixiJS v7 canvas'ı ve React HUD'u ile sürülüyor. Dalga/ekonomi sistemleri
+(Aşama 3) ve mobil paketleme (Aşama 5) sonraki fazlardadır.
 
 ## Çalıştırma
 
 ```bash
 npm install
-npm test   # F# kodunu Fable ile JS'e derler ve testleri node ile koşar
+npm test             # saf çekirdek testleri (dotnet SDK gerektirmez)
+npm run dev          # oyunu Vite dev sunucusunda aç
+npm run build        # üretim paketi (dist/)
+npm run verify:e2e   # headless Chromium ile uçtan uca doğrulama
 ```
 
-`npm test`, dotnet SDK gerektirmeyen `fable-compiler-js` derleyicisini
-kullanır. dotnet SDK'lı ortamlarda çekirdek ayrıca
-`dotnet build src/MergeTowerDefense.fsproj` ile derlenebilir.
+Derleme, dotnet SDK gerektirmeyen `fable-compiler-js` ile yapılır. dotnet
+SDK'lı ortamlarda çekirdek ayrıca `dotnet build src/MergeTowerDefense.fsproj`
+ile derlenebilir.

@@ -10,9 +10,15 @@ oyunu.
 Teknoloji yığını:
 
 - **F#** — tüm oyun mantığı
-- **Fable 4/5** — F# → JavaScript derleyicisi
-- **Elmish (MVU)** — tek yönlü veri akışı (Aşama 2'de eklenecek)
-- **PixiJS** — render motoru (Aşama 2'de eklenecek)
+- **Fable** — F# → JavaScript derleyicisi (bu ortamda dotnet'siz
+  `fable-compiler-js`; dotnet erişilebilir olduğunda Fable 4/5 CLI)
+- **MVU döngüsü** — tek yönlü veri akışı. Nuget erişimi olmadığı için
+  Aşama 2'de Elmish yerine `App.fs` içinde el yazımı mini-MVU kuruldu;
+  Elmish'e geçiş mekanik bir değişikliktir.
+- **PixiJS v7** — render motoru (Aşama 2'de eklendi; binding'ler
+  `src/Interop/Pixi.fs` içinde elle yazıldı)
+- **React 18** — HUD katmanı (Feliz nuget'i yerine `src/Interop/React.fs`
+  içinde minimal el yazımı binding + Feliz-vari DSL)
 - **Capacitor** — mobil paketleme (Aşama 5'te eklenecek)
 
 ## Mimari İlkeler (tüm fazlar için bağlayıcı)
@@ -37,17 +43,23 @@ Teknoloji yığını:
 Faz atlamak yasaktır: bir sonraki faza, kullanıcı (proje sahibi) onayı
 olmadan geçilmez.
 
-### Aşama 1 — Çekirdek Durum Motoru (Gün 1–3) ← MEVCUT AŞAMA
+### Aşama 1 — Çekirdek Durum Motoru (Gün 1–3) ✅ TAMAMLANDI
 
 - Kapsam: domain modeli (grid, kule tipleri/seviyeleri, düşmanlar),
   drag & drop + merge durum makinesi, boş/dolu hücre yönetimi, saf birim
   testleri.
 - Kapsam DIŞI: render, gerçek input, dalga zamanlaması, ekonomi, hedefleme.
 
-### Aşama 2 — Render ve Girdi (Gün 4–7)
+### Aşama 2 — Render ve Girdi (Gün 4–7) ✅ TAMAMLANDI
 
-- PixiJS binding'leri, Elmish MVU döngüsü, pointer/touch olaylarının `Msg`'e
-  çevrilmesi, grid ve kulelerin çizimi, sürükleme hayaleti (drag ghost).
+- PixiJS binding'leri, MVU döngüsü, pointer/touch olaylarının `Msg`'e
+  çevrilmesi, grid/kule/düşman çizimi (tamamen prosedürel, asset yok),
+  sürükleme hayaleti (drag ghost), menzil görselleştirme, drop önizleme
+  vurguları, React HUD (altın/dalga/satın alma — altın ve dalga değerleri
+  Aşama 3 ekonomisine kadar UI katmanında placeholder).
+- Ticker `deltaMS` → `DeltaTime` enjeksiyonu: hareket kare hızından
+  bağımsızdır. Demo düşman üreteci (`Ui.demoSpawnPeriod`) Aşama 3'teki
+  dalga planlayıcının iskele kodudur.
 
 ### Aşama 3 — Oyun Sistemleri (Gün 8–10)
 
@@ -69,15 +81,28 @@ olmadan geçilmez.
 |---|---|
 | `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType`, `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `DeltaTime`, `PathProgress`, `EnemyType`, `Enemy` ve saf yardımcıları |
 | `src/State.fs` | Durum makinesi: `Interaction` (Idle/Dragging), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, `update` |
-| `src/MergeTowerDefense.fsproj` | Çekirdek proje (Fable ile derlenir) |
-| `tests/Tests.fs` | Bağımlılıksız mini test koşucusu ile saf birim testleri |
-| `tests/Tests.fsproj` | Test projesi (çekirdek dosyaları + testler) |
+| `src/Ui.fs` | Saf UI katmanı: `Layout` (canvas geometrisi + hit test), `UiModel`, `UiMsg`, `updateUi`, HUD placeholder'ları, demo düşman üreteci |
+| `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri (yalnızca kullanılan yüzey) |
+| `src/Interop/React.fs` | Minimal React 18 binding'leri + Feliz-vari HTML DSL |
+| `src/Interop/Dom.fs` | Üç DOM dokunuşu (getElementById/appendChild/globalThis) |
+| `src/View/Render.fs` | Prosedürel çizim: grid, kuleler (tip=şekil, seviye=boy/ton/pip), düşmanlar, menzil daireleri, drop önizleme, drag ghost |
+| `src/View/Hud.fs` | React HUD: altın/dalga/düşman sayacı, satın alma butonu, bildirim satırı |
+| `src/App.fs` | Kompozisyon kökü (tek impure modül): Pixi app, ticker→`Frame dt`, pointer→`Msg`, mini-MVU döngüsü, e2e debug kancası |
+| `src/MergeTowerDefense.fsproj` | Uygulama projesi (Fable ile derlenir) |
+| `tests/Tests.fs` | Bağımlılıksız mini test koşucusu ile saf birim testleri (core + Ui) |
+| `tests/Tests.fsproj` | Test projesi (saf dosyalar + testler; interop dosyaları dahil edilmez) |
+| `index.html` | Vite giriş noktası; `#hud-root` (React) ve `#game-root` (Pixi) izole kökler |
+| `scripts/verify-e2e.mjs` | Headless Chromium ile uçtan uca doğrulama (satın alma, drag-merge, döngü) |
 
 ## Komutlar
 
 - `npm install` — bağımlılıkları kurar
 - `npm test` — `fable-compiler-js` ile F# kodunu JS'e derler ve testleri
   node ile koşar. **dotnet SDK gerektirmez** (kısıtlı ağ ortamları için).
+- `npm run dev` — uygulamayı derler ve Vite dev sunucusunda açar
+- `npm run build` — üretim paketi (`dist/`)
+- `npm run verify:e2e` — üretim paketini headless Chromium'da uçtan uca
+  doğrular (ekran görüntüleri `out/e2e/` altına düşer)
 - dotnet SDK mevcut ortamlarda: `dotnet build src/MergeTowerDefense.fsproj`
   ve Aşama 2'den itibaren `dotnet fable` (Fable 4/5 CLI).
 
