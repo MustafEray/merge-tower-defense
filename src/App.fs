@@ -62,7 +62,8 @@ let private start () =
         List.length m.Game.Enemies,
         Option.map fst m.Notice,
         canBuy m,
-        nextTowerCost m.Game
+        nextTowerCost m.Game,
+        m.Muted
 
     let rec dispatch (msg: UiMsg) : unit =
         // Only actually starts/resumes audio when this call originates from
@@ -73,8 +74,9 @@ let private start () =
         let before = hudProjection model
         model <- updateUi msg model
 
-        for cue in model.Cues do
-            Sound.playCue cue
+        if not model.Muted then
+            for cue in model.Cues do
+                Sound.playCue cue
 
         if hudProjection model <> before then
             hudRoot.render (Hud.view model dispatch)

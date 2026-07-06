@@ -943,6 +943,58 @@ let private uiSoundTests () =
     check "a rejected buy raises no cue" (List.isEmpty (updateUi (Buy Archer) broke).Cues)
 
 // ---------------------------------------------------------------------------
+// UI layer: mute toggle and the low-lives HUD warning (Phase 4 UX)
+// ---------------------------------------------------------------------------
+
+let private uiSettingsTests () =
+    let model = init size5
+
+    check "sound starts unmuted" (model.Muted = false)
+
+    let muted = updateUi ToggleMute model
+    check "ToggleMute mutes" (muted.Muted = true)
+    check "ToggleMute leaves the game untouched" (muted.Game = model.Game)
+    check "ToggleMute raises no cue" (List.isEmpty muted.Cues)
+
+    let unmuted = updateUi ToggleMute muted
+    check "toggling twice restores sound" (unmuted.Muted = false)
+
+    // Restart discards the game and every transient but keeps the mute
+    // preference — it is a player setting, not part of the tableau.
+    let playedAndMuted =
+        { (updateUi (Buy Archer) model) with Muted = true }
+
+    let restarted = updateUi Restart playedAndMuted
+    check "restart keeps the mute preference" (restarted.Muted = true)
+    check "restart still resets the game" (Grid.towerCount restarted.Game.Grid = 0)
+
+    // isLowLives is a pure function of remaining lives, unaffected by wave
+    // or defeat state beyond the Defeated short-circuit.
+    check "fresh game has no low-lives warning" (isLowLives model = false)
+
+    let critical =
+        { model with
+            Game =
+                { model.Game with
+                    Status = Playing(Lives.create lowLivesThreshold) } }
+
+    check "lives at the threshold warn" (isLowLives critical = true)
+
+    let safe =
+        { model with
+            Game =
+                { model.Game with
+                    Status = Playing(Lives.create (lowLivesThreshold + 1)) } }
+
+    check "lives above the threshold do not warn" (isLowLives safe = false)
+
+    let defeated =
+        { model with
+            Game = { model.Game with Status = Defeated 3 } }
+
+    check "a defeated game never shows the low-lives warning" (isLowLives defeated = false)
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -966,6 +1018,7 @@ let main _argv =
     uiHudTests ()
     uiEffectTests ()
     uiSoundTests ()
+    uiSettingsTests ()
 
     printfn ""
     printfn "%d passed, %d failed" passed failed

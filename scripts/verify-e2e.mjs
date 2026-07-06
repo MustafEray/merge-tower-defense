@@ -138,6 +138,14 @@ try {
 
   await page.screenshot({ path: `${SHOTS_DIR}/03-combat.png` });
 
+  // The mute toggle is a plain HUD button/dispatch round trip like buy or
+  // restart; click it through real DOM events and check the label flips.
+  assert("mute button starts as Sound: On", (await page.textContent("#mute-toggle")) === "Sound: On");
+  await page.click("#mute-toggle");
+  assert("mute button toggles to Sound: Off", (await page.textContent("#mute-toggle")) === "Sound: Off");
+  await page.click("#mute-toggle");
+  assert("mute button toggles back to Sound: On", (await page.textContent("#mute-toggle")) === "Sound: On");
+
   assert("no console errors", consoleErrors.length === 0);
   if (consoleErrors.length > 0) console.error(consoleErrors.join("\n"));
 

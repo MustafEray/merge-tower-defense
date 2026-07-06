@@ -88,13 +88,13 @@ olmadan geçilmez.
 |---|---|
 | `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType`, `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `Gold`, `Lives`, `DeltaTime`, `PathProgress`, `Path`, `EnemyType`, `Enemy` ve saf yardımcıları |
 | `src/State.fs` | Durum makinesi: `Interaction`, `WavePhase`/`WaveState`, `GameStatus`, `Waves` (zorluk eğrisi), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, tick hattı (dalga→hareket/can→savaş→dalga sonu), `update` |
-| `src/Ui.fs` | Saf UI katmanı: `Layout` (path sınırlarından türetilen canvas geometrisi + hit test), `UiModel` (hover/ghost/notice/atış izleri/`Effect` patlamaları/`LifeFlash`/tek seferlik `SoundCue` kuyruğu), `UiMsg`, `updateUi` |
+| `src/Ui.fs` | Saf UI katmanı: `Layout` (path sınırlarından türetilen canvas geometrisi + hit test), `UiModel` (hover/ghost/notice/atış izleri/`Effect` patlamaları/`LifeFlash`/tek seferlik `SoundCue` kuyruğu/`Muted` tercihi), `UiMsg`, `isLowLives`, `updateUi` |
 | `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri (yalnızca kullanılan yüzey) |
 | `src/Interop/React.fs` | Minimal React 18 binding'leri + Feliz-vari HTML DSL |
 | `src/Interop/Dom.fs` | Üç DOM dokunuşu (getElementById/appendChild/globalThis) |
 | `src/Interop/Audio.fs` | Minimal el yazımı Web Audio API binding'leri (AudioContext + osilatör/gain zarfı ile prosedürel ton üretimi, asset yok) |
 | `src/View/Render.fs` | Prosedürel çizim: grid, kuleler (tip=şekil, seviye=boy/ton/pip), düşmanlar, menzil daireleri, drop önizleme, drag ghost, patlama efektleri (öldürme/merge/spawn), can kaybı ekran flaşı |
-| `src/View/Hud.fs` | React HUD: altın/dalga/düşman sayacı, satın alma butonu, bildirim satırı |
+| `src/View/Hud.fs` | React HUD: altın/dalga/düşman sayacı (düşük can uyarı stiliyle), satın alma butonu, ses açma/kapama düğmesi, bildirim satırı |
 | `src/View/Sound.fs` | `Ui.SoundCue` değerlerini prosedürel Web Audio tonlarına eşler (AudioContext'i uygulama ömrü boyunca elinde tutar) |
 | `src/App.fs` | Kompozisyon kökü (tek impure modül): Pixi app, ticker→`Frame dt`, pointer→`Msg`, mini-MVU döngüsü, her dispatch sonrası ses kuyruğunun çalınması, e2e debug kancası |
 | `src/MergeTowerDefense.fsproj` | Uygulama projesi (Fable ile derlenir) |

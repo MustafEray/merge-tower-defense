@@ -133,7 +133,11 @@ type UiModel =
       /// one-shot action, so a message that touched nothing in the core
       /// (PointerMoved, a rejected Buy) explicitly clears it rather than
       /// letting an older cue linger to be replayed by a later dispatch.
-      Cues: SoundCue list }
+      Cues: SoundCue list
+      /// User preference: when true, the interop shell must not play cues.
+      /// Kept here (not in Interop/Audio) so HUD/tests can read and drive it
+      /// like any other UI-only setting.
+      Muted: bool }
 
 type UiMsg =
     /// Forward a message to the core engine untouched.
@@ -144,6 +148,8 @@ type UiMsg =
     | Buy of TowerType
     /// HUD restart after a game over.
     | Restart
+    /// HUD mute/unmute toggle.
+    | ToggleMute
     /// One render-loop frame worth of injected time.
     | Frame of DeltaTime
 
@@ -155,7 +161,8 @@ let init (size: GridSize) : UiModel =
       Shots = []
       Effects = []
       LifeFlash = 0.0
-      Cues = [] }
+      Cues = []
+      Muted = false }
 
 // ---------------------------------------------------------------------------
 // HUD-facing helpers
@@ -189,6 +196,16 @@ let canBuy (model: UiModel) : bool =
         model.Game.Interaction = Idle
         && Gold.value model.Game.Gold >= nextTowerCost model.Game
         && (firstEmptyCell model.Game.Grid |> Option.isSome)
+
+/// Lives at or below this trigger the HUD's low-lives warning styling.
+let lowLivesThreshold = 3
+
+/// True once the player is down to a handful of lives — a pure, testable
+/// decision the HUD uses to pick its warning styling.
+let isLowLives (model: UiModel) : bool =
+    match model.Game.Status with
+    | Playing lives -> Lives.value lives <= lowLivesThreshold
+    | Defeated _ -> false
 
 /// Turns noteworthy game events into a short HUD message, most important
 /// first. Routine noise (plain returns, per-shot events) stays silent.
@@ -320,7 +337,17 @@ let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
                 Notice = Some("No empty cell for a new tower.", noticeTtl)
                 Cues = [] }
 
-    | Restart -> init (Grid.size model.Game.Grid)
+    // A restart discards the finished game and every transient (shots,
+    // effects, flash, cues) but keeps the player's mute preference — it is a
+    // UI setting, not part of the tableau a restart resets.
+    | Restart ->
+        { init (Grid.size model.Game.Grid) with
+            Muted = model.Muted }
+
+    | ToggleMute ->
+        { model with
+            Muted = not model.Muted
+            Cues = [] }
 
     | Frame dt ->
         let seconds = DeltaTime.seconds dt
