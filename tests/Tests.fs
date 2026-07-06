@@ -574,6 +574,81 @@ let private testCombat () =
              | _ -> false))
 
 // ---------------------------------------------------------------------------
+// Combat: Frost's chill effect
+// ---------------------------------------------------------------------------
+
+let private testFrostSlow () =
+    // A Frost hit chills its target: the timer is set to slowDurationSeconds.
+    let frostArmed, _ =
+        fresh () |> noWaves |> run [ SpawnTower(Frost, at 0 0); SpawnEnemy Grunt ]
+
+    let hit, evs = frostArmed |> run [ Tick(dt 0.05) ]
+    check "frost hit damages the target"
+        (evs |> List.exists (fun e -> match e with EnemyDamaged _ -> true | _ -> false))
+    check "a frost hit chills its target" ((List.head hit.Enemies).Slow = slowDurationSeconds)
+
+    // A non-Frost tower never applies the chill.
+    let archerArmed, _ =
+        fresh () |> noWaves |> run [ SpawnTower(Archer, at 0 0); SpawnEnemy Grunt ]
+
+    let hitByArcher, _ = archerArmed |> run [ Tick(dt 0.05) ]
+    check "an archer hit never chills" ((List.head hitByArcher.Enemies).Slow = 0.0)
+
+    // Movement: a chilled enemy covers exactly slowSpeedFactor of the ground
+    // an identical, unchilled enemy covers in the same time.
+    let path5 = Path.defaultFor size5
+    let baseline, _ = Enemy.spawn EnemyIdGen.initial Grunt
+    let chilledEnemy = { baseline with Slow = slowDurationSeconds }
+
+    let progressOf (enemy: Enemy) =
+        match Enemy.advance path5 (dt 1.0) enemy with
+        | Moved p -> PathProgress.value p
+        | ReachedGoal -> failwith "test setup: enemy should not reach the goal in one second"
+
+    check "a chilled enemy moves at slowSpeedFactor of normal speed"
+        (abs (progressOf chilledEnemy - progressOf baseline * slowSpeedFactor) < 1e-9)
+
+    // The chill decays tick by tick and eventually releases the enemy —
+    // isolated from any tower, so only movement's own decay is exercised.
+    let decayed, _ =
+        { fresh () with Enemies = [ chilledEnemy ] } |> noWaves |> ticks 20 0.1 // 2 seconds
+
+    check "the enemy is still on the field after decaying" (List.length decayed.Enemies = 1)
+    check "the chill decays to zero over time" ((List.head decayed.Enemies).Slow = 0.0)
+
+// ---------------------------------------------------------------------------
+// Combat: Cannon's splash damage
+// ---------------------------------------------------------------------------
+
+let private testCannonSplash () =
+    // Two grunts spawned in the same instant stand at the exact same spot —
+    // well within any positive splash radius. Cannon's single shot should
+    // damage both from one hit.
+    let cannonArmed, _ =
+        fresh () |> noWaves |> run [ SpawnTower(Cannon, at 0 0); SpawnEnemy Grunt; SpawnEnemy Grunt ]
+
+    let afterShot, evs = cannonArmed |> run [ Tick(dt 0.05) ]
+
+    check "cannon splash damages both co-located enemies"
+        (afterShot.Enemies
+         |> List.forall (fun e -> Health.value e.Health < EnemyType.baseHealth Grunt))
+    check "cannon splash reports EnemyDamaged for both"
+        ((evs |> List.filter (fun e -> match e with EnemyDamaged _ -> true | _ -> false) |> List.length) = 2)
+
+    // Archer never splashes: the same co-located pair sees only its single
+    // target take damage, the twin left completely untouched.
+    let archerArmed, _ =
+        fresh () |> noWaves |> run [ SpawnTower(Archer, at 0 0); SpawnEnemy Grunt; SpawnEnemy Grunt ]
+
+    let afterArcherShot, evsArcher = archerArmed |> run [ Tick(dt 0.05) ]
+
+    check "archer hits exactly one enemy per shot"
+        ((evsArcher |> List.filter (fun e -> match e with EnemyDamaged _ -> true | _ -> false) |> List.length) = 1)
+    check "archer leaves the untouched twin at full health"
+        (afterArcherShot.Enemies
+         |> List.exists (fun e -> Health.value e.Health = EnemyType.baseHealth Grunt))
+
+// ---------------------------------------------------------------------------
 // Economy: buying towers, wave bonuses
 // ---------------------------------------------------------------------------
 
@@ -1010,6 +1085,8 @@ let main _argv =
     testEnemies ()
     testWaves ()
     testCombat ()
+    testFrostSlow ()
+    testCannonSplash ()
     testEconomy ()
     testGameOver ()
     testImmutability ()

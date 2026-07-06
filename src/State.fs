@@ -261,9 +261,17 @@ let private stepWave (dtSeconds: float) (state: GameState) =
 
 /// Moves every enemy; goal-reachers cost lives and may end the game.
 let private stepMovement (dt: DeltaTime) (state: GameState) =
+    let dtSeconds = DeltaTime.seconds dt
+
     let folder (survivors, status, events) (enemy: Enemy) =
         match Enemy.advance state.Path dt enemy with
-        | Moved progress -> { enemy with Progress = progress } :: survivors, status, events
+        | Moved progress ->
+            { enemy with
+                Progress = progress
+                Slow = max 0.0 (enemy.Slow - dtSeconds) }
+            :: survivors,
+            status,
+            events
         | ReachedGoal ->
             let events = events @ [ EnemyReachedGoal enemy.Id ]
 
@@ -284,9 +292,27 @@ let private stepMovement (dt: DeltaTime) (state: GameState) =
         Status = status },
     events
 
+/// Resolves one attack against one enemy: the surviving enemy (Frost hits
+/// refresh its chill timer; None once killed), the event to report, and the
+/// bounty earned if this hit was the kill.
+let private resolveHit (isFrost: bool) (damage: Damage) (enemy: Enemy) : Enemy option * GameEvent * int option =
+    match AttackResult.ofDamage damage enemy.Health with
+    | Survived remaining ->
+        let survivor =
+            { enemy with
+                Health = remaining
+                Slow = (if isFrost then slowDurationSeconds else enemy.Slow) }
+
+        Some survivor, EnemyDamaged(enemy.Id, remaining), None
+    | Killed ->
+        let bounty = EnemyType.bounty enemy.Type
+        None, EnemyKilled(enemy.Id, bounty), Some bounty
+
 /// Targeting and shooting: every ready tower fires once per tick at the
 /// in-range enemy that is furthest along the path ("first" targeting).
-/// Towers are processed in deterministic coordinate order.
+/// Cannon's splash then also hits every other enemy within SplashRadius of
+/// that impact point (0.0 for Archer/Frost, so they only ever hit the one
+/// target). Towers are processed in deterministic coordinate order.
 let private stepCombat (dtSeconds: float) (state: GameState) =
     match state.Status with
     | Defeated _ -> state, []
@@ -317,20 +343,47 @@ let private stepCombat (dtSeconds: float) (state: GameState) =
                     let resets = Map.add tower.Id (float stats.CooldownMs / 1000.0) resets
                     let fired = TowerFired(tower.Id, coord, Enemy.positionOn state.Path target)
 
-                    match AttackResult.ofDamage (Tower.attackDamage tower) target.Health with
-                    | Survived remaining ->
-                        enemies
-                        |> List.map (fun e -> if e.Id = target.Id then { e with Health = remaining } else e),
-                        gold,
-                        resets,
-                        events @ [ fired; EnemyDamaged(target.Id, remaining) ]
-                    | Killed ->
-                        let bounty = EnemyType.bounty target.Type
+                    let tgx, tgy = Enemy.positionOn state.Path target
 
-                        enemies |> List.filter (fun e -> e.Id <> target.Id),
-                        Gold.earn bounty gold,
-                        resets,
-                        events @ [ fired; EnemyKilled(target.Id, bounty) ]
+                    let inSplash (enemy: Enemy) =
+                        if stats.SplashRadius <= 0.0 then
+                            false
+                        else
+                            let ex, ey = Enemy.positionOn state.Path enemy
+                            let dx = ex - tgx
+                            let dy = ey - tgy
+                            dx * dx + dy * dy <= stats.SplashRadius * stats.SplashRadius
+
+                    let affected =
+                        target
+                        :: (enemies |> List.filter (fun e -> e.Id <> target.Id && inSplash e))
+
+                    let hits =
+                        affected
+                        |> List.map (fun e -> e.Id, resolveHit (tower.Type = Frost) (Tower.attackDamage tower) e)
+
+                    let survivorById =
+                        hits
+                        |> List.choose (fun (id, (survivor, _, _)) -> survivor |> Option.map (fun s -> id, s))
+                        |> Map.ofList
+
+                    let killedIds =
+                        hits
+                        |> List.choose (fun (id, (survivor, _, _)) -> if survivor.IsNone then Some id else None)
+                        |> Set.ofList
+
+                    let hitEvents = hits |> List.map (fun (_, (_, event, _)) -> event)
+                    let bounty = hits |> List.sumBy (fun (_, (_, _, b)) -> defaultArg b 0)
+
+                    let updatedEnemies =
+                        enemies
+                        |> List.filter (fun e -> not (Set.contains e.Id killedIds))
+                        |> List.map (fun e ->
+                            match Map.tryFind e.Id survivorById with
+                            | Some survivor -> survivor
+                            | None -> e)
+
+                    updatedEnemies, Gold.earn bounty gold, resets, events @ (fired :: hitEvents)
 
         let enemies, gold, resets, events =
             Grid.towers cooled

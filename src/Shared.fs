@@ -152,14 +152,18 @@ type TowerStats =
     { Damage: int
       /// Attack radius in cell units.
       Range: float
-      CooldownMs: int }
+      CooldownMs: int
+      /// Cannon's signature effect: a hit also damages every other enemy
+      /// within this many cell units of the target. 0.0 (Archer, Frost)
+      /// means single-target only.
+      SplashRadius: float }
 
 module Tower =
     let private baseStats =
         function
-        | Archer -> { Damage = 4; Range = 3.0; CooldownMs = 600 }
-        | Cannon -> { Damage = 10; Range = 2.0; CooldownMs = 1500 }
-        | Frost -> { Damage = 2; Range = 2.5; CooldownMs = 900 }
+        | Archer -> { Damage = 4; Range = 3.0; CooldownMs = 600; SplashRadius = 0.0 }
+        | Cannon -> { Damage = 10; Range = 2.0; CooldownMs = 1500; SplashRadius = 0.85 }
+        | Frost -> { Damage = 2; Range = 2.5; CooldownMs = 900; SplashRadius = 0.0 }
 
     /// Stats derive from type + level and are never stored, so they can
     /// never disagree with the tower they describe.
@@ -438,11 +442,20 @@ module EnemyType =
         | Tank -> 2
         | Boss -> 3
 
+/// Frost's signature effect: chilled enemies move at `slowSpeedFactor` of
+/// their normal speed until the timer runs out. A plain (unvalidated) float
+/// like Tower.Cooldown — State.update keeps it non-negative and Enemy.spawn
+/// starts it at 0.0 (not chilled).
+let slowSpeedFactor = 0.55
+let slowDurationSeconds = 1.4
+
 type Enemy =
     { Id: EnemyId
       Type: EnemyType
       Health: Health
-      Progress: PathProgress }
+      Progress: PathProgress
+      /// Remaining seconds of Frost's slow effect; 0.0 means unaffected.
+      Slow: float }
 
 module Enemy =
     /// Spawns at the path start; health = type base × multiplier, kept ≥ 1
@@ -456,19 +469,23 @@ module Enemy =
         { Id = id
           Type = enemyType
           Health = Health hp
-          Progress = PathProgress.start },
+          Progress = PathProgress.start
+          Slow = 0.0 },
         gen'
 
     let spawn (gen: EnemyIdGen) (enemyType: EnemyType) : Enemy * EnemyIdGen = spawnWith gen enemyType 1.0
 
     /// Time-based movement along the path (speed is cells per second, so
-    /// the progress delta is normalised by the path length).
+    /// the progress delta is normalised by the path length). Chilled enemies
+    /// (Slow > 0) move at slowSpeedFactor of their normal speed.
     let advance (path: Path) (dt: DeltaTime) (enemy: Enemy) : MoveResult =
         let (PathProgress p) = enemy.Progress
 
-        let p' =
-            p
-            + EnemyType.speed enemy.Type * DeltaTime.seconds dt / Path.length path
+        let speed =
+            EnemyType.speed enemy.Type
+            * (if enemy.Slow > 0.0 then slowSpeedFactor else 1.0)
+
+        let p' = p + speed * DeltaTime.seconds dt / Path.length path
 
         if p' >= 1.0 then ReachedGoal else Moved(PathProgress p')
 

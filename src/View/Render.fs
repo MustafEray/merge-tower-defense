@@ -246,6 +246,10 @@ let private drawEnemy (g: Graphics) (x: float) (y: float) (enemy: Enemy) : unit 
              .drawCircle(x, y, 19.0))
     |> ignore
 
+    // Frost's chill effect: a pale icy ring around slowed enemies.
+    if enemy.Slow > 0.0 then
+        g.lineStyle(1.5, 0x81d4fa, 0.8).drawCircle (x, y, 13.0) |> ignore
+
     // Health bar: current versus the type's unscaled base (waves scale
     // health up, so late-wave enemies can show a "over-full" bar clamped
     // to the bar width).
@@ -423,7 +427,9 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     for effect in model.Effects do
         drawEffect layers.Effects layout effect
 
-    // Shot tracers, fading with their remaining ttl.
+    // Shot tracers, fading with their remaining ttl. A Cannon shot also
+    // shows its splash radius at the impact point, so the mechanic that
+    // sets it apart from Archer/Frost is actually visible.
     for shot in model.Shots do
         let fx, fy = cellCenter layout shot.FromCell
         let tx, ty = toPx layout shot.Target
@@ -438,6 +444,18 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
             .drawCircle(tx, ty, 3.5)
             .endFill ()
         |> ignore
+
+        match Grid.cellAt shot.FromCell model.Game.Grid with
+        | Occupied tower when (Tower.stats tower).SplashRadius > 0.0 ->
+            let radiusPx = (Tower.stats tower).SplashRadius * layout.CellSize
+
+            layers.Shots
+                .lineStyle(1.5, 0xffa726, 0.6 * alpha)
+                .beginFill(0xffa726, 0.12 * alpha)
+                .drawCircle(tx, ty, radiusPx)
+                .endFill ()
+            |> ignore
+        | _ -> ()
 
     // Drag ghost follows the raw pointer position.
     match model.Game.Interaction, model.Pointer with

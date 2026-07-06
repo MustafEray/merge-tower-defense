@@ -86,8 +86,8 @@ olmadan geçilmez.
 
 | Dosya | İçerik |
 |---|---|
-| `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType`, `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `Gold`, `Lives`, `DeltaTime`, `PathProgress`, `Path`, `EnemyType`, `Enemy` ve saf yardımcıları |
-| `src/State.fs` | Durum makinesi: `Interaction`, `WavePhase`/`WaveState`, `GameStatus`, `Waves` (zorluk eğrisi), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, tick hattı (dalga→hareket/can→savaş→dalga sonu), `update` |
+| `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType` (Cannon = `SplashRadius`'lu alan hasarı, Frost = `slowSpeedFactor`/`slowDurationSeconds`'lı yavaşlatma), `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `Gold`, `Lives`, `DeltaTime`, `PathProgress`, `Path`, `EnemyType`, `Enemy` (`Slow` sayacı dahil) ve saf yardımcıları |
+| `src/State.fs` | Durum makinesi: `Interaction`, `WavePhase`/`WaveState`, `GameStatus`, `Waves` (zorluk eğrisi), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, tick hattı (dalga→hareket/can→savaş [hedef + Cannon sıçraması `resolveHit` ile birleşik çözülür]→dalga sonu), `update` |
 | `src/Ui.fs` | Saf UI katmanı: `Layout` (path sınırlarından türetilen canvas geometrisi + hit test), `UiModel` (hover/ghost/notice/atış izleri/`Effect` patlamaları/`LifeFlash`/tek seferlik `SoundCue` kuyruğu/`Muted` tercihi), `UiMsg`, `isLowLives`, `updateUi` |
 | `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri (yalnızca kullanılan yüzey) |
 | `src/Interop/React.fs` | Minimal React 18 binding'leri + Feliz-vari HTML DSL |
