@@ -821,14 +821,14 @@ let private uiEffectTests () =
              | MergeFlash Frost -> true
              | _ -> false))
 
-    // Non-destructive actions raise no burst.
-    let moved =
-        [ GameMsg(SpawnTower(Archer, at 0 0))
-          GameMsg(StartDrag(at 0 0))
-          GameMsg(Drop(at 4 4)) ]
-        |> List.fold (fun m msg -> updateUi msg m) baseModel
+    // Non-destructive actions raise no burst beyond the spawn's own pop.
+    let spawned = updateUi (GameMsg(SpawnTower(Archer, at 0 0))) baseModel
 
-    check "a plain move spawns no effect" (List.isEmpty moved.Effects)
+    let moved =
+        [ GameMsg(StartDrag(at 0 0)); GameMsg(Drop(at 4 4)) ]
+        |> List.fold (fun m msg -> updateUi msg m) spawned
+
+    check "a plain move raises no additional effect" (List.length moved.Effects = List.length spawned.Effects)
 
     // Effects fade with injected time and expire (killBurstTtl < 1s).
     let faded = updateUi (Frame(dt 1.0)) killed
@@ -841,6 +841,32 @@ let private uiEffectTests () =
         (match ticked.Effects, killed.Effects with
          | e' :: _, e :: _ -> e'.Ttl < e.Ttl
          | _ -> false)
+
+    // Buying (or debug-spawning) a tower pops a SpawnPop at its cell — never
+    // a MergeFlash, since no merge happened.
+    let bought = updateUi (Buy Archer) baseModel
+
+    check "buying a tower spawns a SpawnPop effect"
+        (bought.Effects
+         |> List.exists (fun e ->
+             match e.Kind with
+             | SpawnPop Archer -> e.At = Coord.center (at 0 0)
+             | _ -> false))
+
+    // Losing a life lights the full-canvas flash; it decays and clears over
+    // time just like the other transient effects.
+    check "fresh model has no life flash" (baseModel.LifeFlash = 0.0)
+
+    // A huge Tick (via GameMsg, bypassing Frame's own same-tick fade step)
+    // walks the enemy straight to the goal.
+    let lifeLost =
+        updateUi (GameMsg(SpawnEnemy Grunt)) baseModel
+        |> updateUi (GameMsg(Tick(dt 1000.0)))
+
+    check "reaching the goal lights the life flash" (lifeLost.LifeFlash > 0.0)
+
+    let flashFaded = updateUi (Frame(dt 10.0)) lifeLost
+    check "the life flash decays to zero" (flashFaded.LifeFlash = 0.0)
 
 // ---------------------------------------------------------------------------
 // Entry point

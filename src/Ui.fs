@@ -90,6 +90,9 @@ type EffectKind =
     | KillBurst of EnemyType
     /// Flash celebrating a merge that produced a tower of this type.
     | MergeFlash of TowerType
+    /// Quick pop where a fresh tower of this type was placed (bought or
+    /// spawned; a merge produces MergeFlash instead, never both).
+    | SpawnPop of TowerType
 
 /// A one-shot animated burst anchored at a cell-unit position, fading over
 /// Ttl seconds. Kept in cell units (never pixels) like the rest of this layer.
@@ -108,8 +111,11 @@ type UiModel =
       Notice: (string * float) option
       /// Fading shot tracers for the renderer.
       Shots: Shot list
-      /// Fading burst effects (kills, merges) for the renderer.
-      Effects: Effect list }
+      /// Fading burst effects (kills, merges, spawns) for the renderer.
+      Effects: Effect list
+      /// Remaining seconds of a full-canvas red flash after a life is lost.
+      /// 0.0 means no flash is showing.
+      LifeFlash: float }
 
 type UiMsg =
     /// Forward a message to the core engine untouched.
@@ -129,7 +135,8 @@ let init (size: GridSize) : UiModel =
       Pointer = None
       Notice = None
       Shots = []
-      Effects = [] }
+      Effects = []
+      LifeFlash = 0.0 }
 
 // ---------------------------------------------------------------------------
 // HUD-facing helpers
@@ -142,6 +149,8 @@ let shotTtl = 0.12
 // effect's animation progress without duplicating the constants.
 let killBurstTtl = 0.35
 let mergeFlashTtl = 0.45
+let spawnPopTtl = 0.25
+let lifeFlashTtl = 0.35
 
 /// Total lifetime of an effect, keyed by its kind. Progress in the renderer is
 /// therefore (duration - remaining) / duration.
@@ -149,6 +158,7 @@ let effectDuration =
     function
     | KillBurst _ -> killBurstTtl
     | MergeFlash _ -> mergeFlashTtl
+    | SpawnPop _ -> spawnPopTtl
 
 let firstEmptyCell (grid: Grid) : Coord option =
     Grid.coords grid |> List.tryFind (fun c -> Grid.cellAt c grid = Empty)
@@ -229,13 +239,26 @@ let private applyGame (msg: Msg) (model: UiModel) : UiModel =
                     { At = Coord.center at
                       Ttl = mergeFlashTtl
                       Kind = MergeFlash result.Type }
+            | TowerBought(tower, at, _)
+            | TowerSpawned(tower, at) ->
+                Some
+                    { At = Coord.center at
+                      Ttl = spawnPopTtl
+                      Kind = SpawnPop tower.Type }
             | _ -> None)
+
+    let lifeFlash =
+        if events |> List.exists (function LifeLost _ -> true | _ -> false) then
+            lifeFlashTtl
+        else
+            model.LifeFlash
 
     { model with
         Game = game
         Notice = notice
         Shots = newShots @ model.Shots
-        Effects = newEffects @ model.Effects }
+        Effects = newEffects @ model.Effects
+        LifeFlash = lifeFlash }
 
 let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
     match msg with
@@ -280,7 +303,10 @@ let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
                 let ttl' = effect.Ttl - seconds
                 if ttl' <= 0.0 then None else Some { effect with Ttl = ttl' })
 
+        let lifeFlash = max 0.0 (model.LifeFlash - seconds)
+
         { model with
             Notice = notice
             Shots = shots
-            Effects = effects }
+            Effects = effects
+            LifeFlash = lifeFlash }

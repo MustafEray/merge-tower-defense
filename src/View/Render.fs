@@ -45,7 +45,7 @@ let private enemyColor (enemyType: EnemyType) =
 // ---------------------------------------------------------------------------
 
 /// Draw order, bottom to top: static board, overlay (highlights + ranges),
-/// towers, enemies, burst effects, shot tracers, drag ghost.
+/// towers, enemies, burst effects, shot tracers, drag ghost, life-lost flash.
 type Layers =
     { Static: Graphics
       Overlay: Graphics
@@ -53,7 +53,8 @@ type Layers =
       Enemies: Graphics
       Effects: Graphics
       Shots: Graphics
-      Ghost: Graphics }
+      Ghost: Graphics
+      Flash: Graphics }
 
 let createLayers (app: Application) : Layers =
     let make () =
@@ -67,7 +68,8 @@ let createLayers (app: Application) : Layers =
       Enemies = make ()
       Effects = make ()
       Shots = make ()
-      Ghost = make () }
+      Ghost = make ()
+      Flash = make () }
 
 // ---------------------------------------------------------------------------
 // Shared shape helpers
@@ -328,6 +330,26 @@ let private drawEffect (g: Graphics) (layout: Layout) (effect: Effect) : unit =
             .lineTo(x, y + s)
         |> ignore
 
+    | SpawnPop towerType ->
+        // Small, quick ring pop marking a freshly placed tower.
+        let color = towerBaseColor towerType
+        let radius = layout.CellSize * (0.1 + 0.3 * grow)
+
+        g.lineStyle(2.0, color, 0.8 * fade).drawCircle (x, y, radius)
+        |> ignore
+
+/// Full-canvas red vignette that flashes when a life is lost, fading with the
+/// model's remaining LifeFlash seconds.
+let private drawLifeFlash (layout: Layout) (lifeFlash: float) (g: Graphics) : unit =
+    if lifeFlash > 0.0 then
+        let alpha = 0.35 * (lifeFlash / lifeFlashTtl)
+
+        g
+            .beginFill(0xef5350, alpha)
+            .drawRect(0.0, 0.0, layout.CanvasWidth, layout.CanvasHeight)
+            .endFill ()
+        |> ignore
+
 let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     let overlay = layers.Overlay
     overlay.clear () |> ignore
@@ -336,6 +358,7 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     layers.Effects.clear () |> ignore
     layers.Shots.clear () |> ignore
     layers.Ghost.clear () |> ignore
+    layers.Flash.clear () |> ignore
 
     let cell = layout.CellSize
     let path = model.Game.Path
@@ -420,3 +443,6 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     match model.Game.Interaction, model.Pointer with
     | Dragging drag, Some(px, py) -> drawTowerShape layers.Ghost px py drag.Tower 0.6
     | _ -> ()
+
+    // Full-canvas flash on top of everything when a life was just lost.
+    drawLifeFlash layout model.LifeFlash layers.Flash
