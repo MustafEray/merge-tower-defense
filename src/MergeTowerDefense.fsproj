@@ -14,9 +14,11 @@
     <Compile Include="Interop/Pixi.fs" />
     <Compile Include="Interop/React.fs" />
     <Compile Include="Interop/Dom.fs" />
+    <Compile Include="Interop/Audio.fs" />
     <!-- View shells -->
     <Compile Include="View/Render.fs" />
     <Compile Include="View/Hud.fs" />
+    <Compile Include="View/Sound.fs" />
     <Compile Include="App.fs" />
   </ItemGroup>
 

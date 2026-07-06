@@ -65,8 +65,16 @@ let private start () =
         nextTowerCost m.Game
 
     let rec dispatch (msg: UiMsg) : unit =
+        // Only actually starts/resumes audio when this call originates from
+        // a real user gesture (pointerdown, a HUD click); harmless no-op
+        // from the ticker's own Frame dispatches.
+        Sound.unlock ()
+
         let before = hudProjection model
         model <- updateUi msg model
+
+        for cue in model.Cues do
+            Sound.playCue cue
 
         if hudProjection model <> before then
             hudRoot.render (Hud.view model dispatch)

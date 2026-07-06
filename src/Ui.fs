@@ -101,6 +101,18 @@ type Effect =
       Ttl: float
       Kind: EffectKind }
 
+/// A one-shot audio cue for the impure sound layer to synthesize. Carries the
+/// domain value that determines pitch/timbre, same discipline as EffectKind:
+/// the actual waveform/frequency choice stays out of this pure module.
+type SoundCue =
+    | ShootSound of TowerType
+    | KillSound of EnemyType
+    | MergeSound of TowerType
+    | BuySound
+    | WaveStartSound
+    | LifeLostSound
+    | GameOverSound
+
 type UiModel =
     { Game: GameState
       /// Cell currently under the pointer, if any.
@@ -115,7 +127,13 @@ type UiModel =
       Effects: Effect list
       /// Remaining seconds of a full-canvas red flash after a life is lost.
       /// 0.0 means no flash is showing.
-      LifeFlash: float }
+      LifeFlash: float
+      /// Sound cues raised by the most recent transition only — unlike Shots
+      /// and Effects this list is replaced, never accumulated: playback is a
+      /// one-shot action, so a message that touched nothing in the core
+      /// (PointerMoved, a rejected Buy) explicitly clears it rather than
+      /// letting an older cue linger to be replayed by a later dispatch.
+      Cues: SoundCue list }
 
 type UiMsg =
     /// Forward a message to the core engine untouched.
@@ -136,7 +154,8 @@ let init (size: GridSize) : UiModel =
       Notice = None
       Shots = []
       Effects = []
-      LifeFlash = 0.0 }
+      LifeFlash = 0.0
+      Cues = [] }
 
 // ---------------------------------------------------------------------------
 // HUD-facing helpers
@@ -191,6 +210,24 @@ let private noticeFor (events: GameEvent list) : string option =
     match events |> List.choose noticeOf with
     | [] -> None
     | picks -> picks |> List.maxBy fst |> snd |> Some
+
+/// Turns an event into its sound cue, if any. Needs the post-transition grid
+/// (a fired tower is still standing there) and a lookup of the enemy types
+/// that existed before the transition (a killed enemy is already gone).
+let private cueOf (grid: Grid) (enemyTypeOf: EnemyId -> EnemyType option) (event: GameEvent) : SoundCue option =
+    match event with
+    | TowerFired(_, coord, _) ->
+        match Grid.cellAt coord grid with
+        | Occupied tower -> Some(ShootSound tower.Type)
+        | Empty -> None
+    | EnemyKilled(id, _) -> enemyTypeOf id |> Option.map KillSound
+    | TowersMerged(_, _, result, _) -> Some(MergeSound result.Type)
+    | TowerBought _
+    | TowerSpawned _ -> Some BuySound
+    | WaveStarted _ -> Some WaveStartSound
+    | LifeLost _ -> Some LifeLostSound
+    | GameOver _ -> Some GameOverSound
+    | _ -> None
 
 // ---------------------------------------------------------------------------
 // UI transition function (pure)
@@ -253,12 +290,17 @@ let private applyGame (msg: Msg) (model: UiModel) : UiModel =
         else
             model.LifeFlash
 
+    let cues =
+        events
+        |> List.choose (cueOf game.Grid (fun id -> enemyInfo |> Map.tryFind id |> Option.map snd))
+
     { model with
         Game = game
         Notice = notice
         Shots = newShots @ model.Shots
         Effects = newEffects @ model.Effects
-        LifeFlash = lifeFlash }
+        LifeFlash = lifeFlash
+        Cues = cues }
 
 let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
     match msg with
@@ -267,14 +309,16 @@ let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
     | PointerMoved(hover, pointer) ->
         { model with
             Hover = hover
-            Pointer = pointer }
+            Pointer = pointer
+            Cues = [] }
 
     | Buy towerType ->
         match firstEmptyCell model.Game.Grid with
         | Some cell -> applyGame (BuyTower(towerType, cell)) model
         | None ->
             { model with
-                Notice = Some("No empty cell for a new tower.", noticeTtl) }
+                Notice = Some("No empty cell for a new tower.", noticeTtl)
+                Cues = [] }
 
     | Restart -> init (Grid.size model.Game.Grid)
 

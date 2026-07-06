@@ -869,6 +869,80 @@ let private uiEffectTests () =
     check "the life flash decays to zero" (flashFaded.LifeFlash = 0.0)
 
 // ---------------------------------------------------------------------------
+// UI layer: sound cues (Phase 4 audio)
+// ---------------------------------------------------------------------------
+
+let private uiSoundTests () =
+    let model = init size5
+    let baseModel = { model with Game = noWaves model.Game }
+
+    check "fresh model has no cues" (List.isEmpty model.Cues)
+
+    // Buying raises exactly a BuySound cue.
+    let bought = updateUi (Buy Archer) baseModel
+    check "buying a tower cues BuySound" (bought.Cues = [ BuySound ])
+
+    // A tower firing cues ShootSound tagged with its own type (looked up
+    // from the post-tick grid, since the tower is still standing there).
+    let armed =
+        updateUi (GameMsg(SpawnTower(Cannon, at 0 0))) baseModel
+        |> updateUi (GameMsg(SpawnEnemy Grunt))
+
+    let firing = updateUi (GameMsg(Tick(dt 0.05))) armed
+    check "a tower shot cues ShootSound with its own type" (firing.Cues |> List.contains (ShootSound Cannon))
+
+    // A lethal hit cues KillSound tagged with the enemy's type (read from
+    // the pre-kill state, since the enemy is already gone from the result).
+    let withEnemy = updateUi (GameMsg(SpawnEnemy Boss)) baseModel
+    let boss = List.head withEnemy.Game.Enemies
+    let killed = updateUi (GameMsg(HitEnemy(boss.Id, dmg 9999))) withEnemy
+    check "a kill cues KillSound with the enemy's type" (killed.Cues = [ KillSound Boss ])
+
+    // Merging cues MergeSound tagged with the resulting tower type.
+    let merged =
+        [ GameMsg(SpawnTower(Frost, at 2 0))
+          GameMsg(SpawnTower(Frost, at 2 1))
+          GameMsg(StartDrag(at 2 0))
+          GameMsg(Drop(at 2 1)) ]
+        |> List.fold (fun m msg -> updateUi msg m) baseModel
+
+    check "a merge cues MergeSound with the resulting type" (merged.Cues = [ MergeSound Frost ])
+
+    // Wave starts, life loss and game over each cue their own sound. Cues are
+    // replaced (not accumulated) on every dispatch like the model field
+    // itself, so to catch a one-off cue across many frames the test has to
+    // gather them itself — exactly like the core `run` helper gathers events.
+    let uiCuesAcrossFrames (count: int) (step: float) (m: UiModel) : SoundCue list =
+        [ 1 .. count ]
+        |> List.fold (fun (m, cues) _ -> let m' = updateUi (Frame(dt step)) m in m', cues @ m'.Cues) (m, [])
+        |> snd
+
+    check "a wave start cues WaveStartSound" (uiCuesAcrossFrames 80 0.1 model |> List.contains WaveStartSound)
+
+    let lifeLost =
+        updateUi (GameMsg(SpawnEnemy Grunt)) baseModel
+        |> updateUi (GameMsg(Tick(dt 1000.0)))
+
+    check "reaching the goal cues LifeLostSound" (lifeLost.Cues |> List.contains LifeLostSound)
+
+    let flooded =
+        { baseModel with
+            Game = fst (run [ for _ in 1 .. startingLives -> SpawnEnemy Grunt ] baseModel.Game) }
+
+    let ended = updateUi (GameMsg(Tick(dt 1000.0))) flooded
+    check "the killing blow to the last life cues GameOverSound" (ended.Cues |> List.contains GameOverSound)
+
+    // Non-destructive dispatches (pointer movement, a rejected buy) clear
+    // any stale cue rather than letting a past one-shot linger and replay.
+    check "plain pointer movement raises no cue"
+        (List.isEmpty (updateUi (PointerMoved(Some(at 1 1), Some(10.0, 10.0))) bought).Cues)
+
+    let broke =
+        [ 1 .. 4 ] |> List.fold (fun m _ -> updateUi (Buy Archer) m) model
+
+    check "a rejected buy raises no cue" (List.isEmpty (updateUi (Buy Archer) broke).Cues)
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
@@ -891,6 +965,7 @@ let main _argv =
     uiLayoutTests ()
     uiHudTests ()
     uiEffectTests ()
+    uiSoundTests ()
 
     printfn ""
     printfn "%d passed, %d failed" passed failed
