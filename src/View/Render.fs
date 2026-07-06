@@ -1,8 +1,12 @@
-/// Procedural rendering with the PixiJS Graphics API — no external assets.
-/// Pure "view = f(model)": every frame the dynamic layers are cleared and
-/// redrawn from the current UiModel; nothing in here mutates game state.
-/// The enemy lane is drawn from the core's Path geometry, so the picture
-/// can never disagree with the simulation.
+/// Rendering with the PixiJS API. Pure "view = f(model)": every frame the
+/// dynamic layers are cleared and redrawn from the current UiModel; nothing
+/// in here mutates game state. The enemy lane is drawn from the core's Path
+/// geometry, so the picture can never disagree with the simulation.
+///
+/// Towers use real art (Kenney's CC0 "Tower Defense" pack, public/towers/ —
+/// see public/towers/KENNEY-LICENSE.txt) loaded as Sprites; everything else
+/// (grid, path, enemies, range/preview overlays, burst effects) stays
+/// procedural Graphics, same as before.
 module MergeTowerDefense.View.Render
 
 open MergeTowerDefense.Shared
@@ -33,6 +37,11 @@ let private towerBaseColor (towerType: TowerType) =
     | Cannon -> 0xffa726
     | Frost -> 0x4fc3f7
 
+/// Displayed height in pixels for a tower sprite at the given rank. Shared
+/// between the sprite's scale and its pip placement so the two can never
+/// drift apart.
+let private towerDisplayHeight (rank: int) = 40.0 + 6.0 * float rank
+
 let private enemyColor (enemyType: EnemyType) =
     match enemyType with
     | Grunt -> 0xb0bec5
@@ -45,31 +54,66 @@ let private enemyColor (enemyType: EnemyType) =
 // ---------------------------------------------------------------------------
 
 /// Draw order, bottom to top: static board, overlay (highlights + ranges),
-/// towers, enemies, burst effects, shot tracers, drag ghost, life-lost flash.
+/// tower sprites + their pip decorations, enemies, burst effects, shot
+/// tracers, drag ghost, life-lost flash.
 type Layers =
     { Static: Graphics
       Overlay: Graphics
-      Towers: Graphics
+      /// Real tower art (Sprite children), cleared and rebuilt every frame.
+      TowerSprites: Container
+      /// Level pips drawn under/over the sprites; a Graphics layer since
+      /// pips are small procedural dots, not art.
+      TowerDecor: Graphics
       Enemies: Graphics
       Effects: Graphics
       Shots: Graphics
-      Ghost: Graphics
+      /// The drag ghost's Sprite (0 or 1 children), cleared every frame.
+      Ghost: Container
       Flash: Graphics }
 
 let createLayers (app: Application) : Layers =
-    let make () =
+    let makeGraphics () =
         let g = createGraphics ()
         app.stage.addChild g |> ignore
         g
 
-    { Static = make ()
-      Overlay = make ()
-      Towers = make ()
-      Enemies = make ()
-      Effects = make ()
-      Shots = make ()
-      Ghost = make ()
-      Flash = make () }
+    let makeContainer () =
+        let c = createContainer ()
+        app.stage.addChild c |> ignore
+        c
+
+    { Static = makeGraphics ()
+      Overlay = makeGraphics ()
+      TowerSprites = makeContainer ()
+      TowerDecor = makeGraphics ()
+      Enemies = makeGraphics ()
+      Effects = makeGraphics ()
+      Shots = makeGraphics ()
+      Ghost = makeContainer ()
+      Flash = makeGraphics () }
+
+// ---------------------------------------------------------------------------
+// Tower art (Kenney CC0, public/towers/ — see public/towers/KENNEY-LICENSE.txt)
+// ---------------------------------------------------------------------------
+
+type TowerTextures =
+    { Archer: Texture
+      Cannon: Texture
+      Frost: Texture }
+
+/// Loads the three tower textures once at startup. Pixi caches by URL and
+/// resolves the image asynchronously, so calling this before the first
+/// frame is enough — no explicit await needed.
+let loadTowerTextures () : TowerTextures =
+    { Archer = loadTexture "/towers/archer.png"
+      Cannon = loadTexture "/towers/cannon.png"
+      Frost = loadTexture "/towers/frost.png" }
+
+let private textureFor (textures: TowerTextures) (towerType: TowerType) =
+    match towerType with
+    | Archer -> textures.Archer
+    | Cannon -> textures.Cannon
+    | Frost -> textures.Frost
 
 // ---------------------------------------------------------------------------
 // Shared shape helpers
@@ -174,36 +218,51 @@ let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) :
 // Shape helpers shared by placed towers and the drag ghost
 // ---------------------------------------------------------------------------
 
-/// Draws one tower, fully procedurally: shape encodes the type, size/shade
-/// encode the level, and white pips repeat the level for colour-blind
-/// readability. Used for both placed towers and the drag ghost.
-let private drawTowerShape (g: Graphics) (x: float) (y: float) (tower: Tower) (alpha: float) : unit =
+/// Places one tower's real-art Sprite into `container`, tinted by the same
+/// per-rank shade the game has always used (Sprite.tint multiplies the
+/// texture's colour, so the art still darkens/lightens by level). Used for
+/// both placed towers and the drag ghost.
+let private placeTowerSprite
+    (textures: TowerTextures)
+    (container: Container)
+    (x: float)
+    (y: float)
+    (tower: Tower)
+    (alpha: float)
+    : unit =
     let rank = TowerLevel.rank tower.Level
-    let half = 12.0 + 3.0 * float rank
-    let color = towerShade tower.Type rank
+    let sprite = createSprite (textureFor textures tower.Type)
+
+    // Native size is whatever the loaded texture reports at scale (1,1);
+    // read it before rescaling so both axes stay in proportion.
+    let nativeHeight = sprite.height
+    let scale = if nativeHeight > 0.0 then towerDisplayHeight rank / nativeHeight else 1.0
+
+    sprite.anchor.x <- 0.5
+    sprite.anchor.y <- 0.5
+    sprite.scale.x <- scale
+    sprite.scale.y <- scale
+    sprite.position.x <- x
+    sprite.position.y <- y
+    sprite.alpha <- alpha
+    sprite.tint <- towerShade tower.Type rank
+
+    container.addChild sprite |> ignore
+
+/// White pips below a tower repeat its level for colour-blind readability —
+/// kept procedural (small dots) even though the tower body is now real art.
+let private drawTowerPips (g: Graphics) (x: float) (y: float) (tower: Tower) (alpha: float) : unit =
+    let rank = TowerLevel.rank tower.Level
+    let pipY = y + towerDisplayHeight rank / 2.0 + 6.0
 
     g.lineStyle (0.0, 0, 0.0) |> ignore
-
-    (match tower.Type with
-     | Archer -> g.beginFill(color, alpha).drawCircle(x, y, half).endFill ()
-     | Cannon ->
-         g
-             .beginFill(color, alpha)
-             .drawRoundedRect(x - half, y - half, half * 2.0, half * 2.0, 6.0)
-             .endFill ()
-     | Frost ->
-         g
-             .beginFill(color, alpha)
-             .drawPolygon(poly [ x; y - half; x + half; y; x; y + half; x - half; y ])
-             .endFill ())
-    |> ignore
 
     for i in 0 .. rank - 1 do
         let pipX = x - float (rank - 1) * 4.0 + float i * 8.0
 
         g
             .beginFill(0xffffff, 0.9 * alpha)
-            .drawCircle(pipX, y + half + 6.0, 2.0)
+            .drawCircle(pipX, pipY, 2.0)
             .endFill ()
         |> ignore
 
@@ -354,14 +413,15 @@ let private drawLifeFlash (layout: Layout) (lifeFlash: float) (g: Graphics) : un
             .endFill ()
         |> ignore
 
-let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
+let drawFrame (textures: TowerTextures) (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     let overlay = layers.Overlay
     overlay.clear () |> ignore
-    layers.Towers.clear () |> ignore
+    layers.TowerSprites.removeChildren () |> ignore
+    layers.TowerDecor.clear () |> ignore
     layers.Enemies.clear () |> ignore
     layers.Effects.clear () |> ignore
     layers.Shots.clear () |> ignore
-    layers.Ghost.clear () |> ignore
+    layers.Ghost.removeChildren () |> ignore
     layers.Flash.clear () |> ignore
 
     let cell = layout.CellSize
@@ -416,7 +476,8 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     // Towers on the board.
     for coord, tower in Grid.towers model.Game.Grid do
         let x, y = cellCenter layout coord
-        drawTowerShape layers.Towers x y tower 1.0
+        placeTowerSprite textures layers.TowerSprites x y tower 1.0
+        drawTowerPips layers.TowerDecor x y tower 1.0
 
     // Enemies along the path.
     for enemy in model.Game.Enemies do
@@ -459,7 +520,9 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
 
     // Drag ghost follows the raw pointer position.
     match model.Game.Interaction, model.Pointer with
-    | Dragging drag, Some(px, py) -> drawTowerShape layers.Ghost px py drag.Tower 0.6
+    | Dragging drag, Some(px, py) ->
+        placeTowerSprite textures layers.Ghost px py drag.Tower 0.6
+        drawTowerPips layers.TowerDecor px py drag.Tower 0.6
     | _ -> ()
 
     // Full-canvas flash on top of everything when a life was just lost.

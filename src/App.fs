@@ -41,6 +41,7 @@ let private start () =
 
     let layers = Render.createLayers app
     Render.drawStatic layout size model.Game.Path layers
+    let towerTextures = Render.loadTowerTextures ()
 
     // --- React HUD in its own DOM root -------------------------------------
     let hudRoot = React.createRoot (Dom.getElementById "hud-root")
@@ -138,7 +139,7 @@ let private start () =
         | Some dt -> dispatch (Frame dt)
         | None -> ()
 
-        Render.drawFrame layout model layers)
+        Render.drawFrame towerTextures layout model layers)
     |> ignore
 
     hudRoot.render (Hud.view model dispatch)

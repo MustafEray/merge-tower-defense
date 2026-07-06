@@ -19,10 +19,26 @@ type Container =
     abstract addChild: child: Container -> Container
     abstract removeChildren: unit -> unit
     abstract position: Point
+    abstract scale: Point
+    abstract alpha: float with get, set
     abstract eventMode: string with get, set
     abstract hitArea: obj with get, set
     abstract cursor: string with get, set
     abstract on: eventName: string * handler: (obj -> unit) -> Container
+
+/// A single loaded image (Kenney's CC0 tower art — see public/towers/). Kept
+/// opaque: Sprite reads its native pixel size before any scale is applied.
+type Texture = interface end
+
+/// A textured display object — the real-art counterpart to Graphics' vector
+/// shapes. `tint` multiplies the texture's colour, which is how the existing
+/// per-level shade arrays (Render.towerShade) still apply to real art.
+type Sprite =
+    inherit Container
+    abstract width: float with get, set
+    abstract height: float with get, set
+    abstract anchor: Point
+    abstract tint: int with get, set
 
 type Graphics =
     inherit Container
@@ -62,6 +78,13 @@ let createGraphics () : Graphics = createNew pixi?Graphics () |> unbox
 
 let createRectangle (x: float) (y: float) (width: float) (height: float) : obj =
     createNew pixi?Rectangle (x, y, width, height)
+
+/// Loads (or returns the already-cached) texture for a same-origin image
+/// URL. Pixi resolves the image asynchronously and swaps every Sprite using
+/// this texture over to the real pixels once it arrives.
+let loadTexture (url: string) : Texture = pixi?Texture?from (url)
+
+let createSprite (texture: Texture) : Sprite = createNew pixi?Sprite texture |> unbox
 
 /// Canvas-space pointer position of a federated pointer event.
 let pointerPosition (event: obj) : float * float =

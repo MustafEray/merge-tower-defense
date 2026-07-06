@@ -53,10 +53,11 @@ olmadan geçilmez.
 ### Aşama 2 — Render ve Girdi (Gün 4–7) ✅ TAMAMLANDI
 
 - PixiJS binding'leri, MVU döngüsü, pointer/touch olaylarının `Msg`'e
-  çevrilmesi, grid/kule/düşman çizimi (tamamen prosedürel, asset yok),
-  sürükleme hayaleti (drag ghost), menzil görselleştirme, drop önizleme
-  vurguları, React HUD (altın/dalga/satın alma — altın ve dalga değerleri
-  Aşama 3 ekonomisine kadar UI katmanında placeholder).
+  çevrilmesi, grid/kule/düşman çizimi (tamamen prosedürel, asset yok —
+  Aşama 4'te yalnızca kule görselleri için bilinçli olarak gözden geçirildi,
+  aşağıya bakın), sürükleme hayaleti (drag ghost), menzil görselleştirme,
+  drop önizleme vurguları, React HUD (altın/dalga/satın alma — altın ve
+  dalga değerleri Aşama 3 ekonomisine kadar UI katmanında placeholder).
 - Ticker `deltaMS` → `DeltaTime` enjeksiyonu: hareket kare hızından
   bağımsızdır. Demo düşman üreteci (`Ui.demoSpawnPeriod`) Aşama 3'teki
   dalga planlayıcının iskele kodudur.
@@ -75,7 +76,27 @@ olmadan geçilmez.
 
 ### Aşama 4 — Cila (Gün 11–12)
 
-- Animasyon, ses, UI/UX iyileştirmeleri, oyun dengesi ayarları.
+- Animasyon: `Ui.Effect` (`KillBurst`/`MergeFlash`/`SpawnPop`) ve can kaybı
+  ekran flaşı (`Ui.LifeFlash`) — `Shots` ile aynı fade-then-expire deseni.
+- Ses: `Ui.SoundCue` + `View/Sound.fs` (prosedürel Web Audio tonları, asset
+  yok) ve HUD'da ses açma/kapama düğmesi (`Ui.Muted`).
+- UI/UX: düşük can HUD uyarısı (`Ui.isLowLives`).
+- Oyun dengesi: Frost'a gerçek yavaşlatma (chill) etkisi (`Enemy.Slow`,
+  `slowSpeedFactor`/`slowDurationSeconds`), Cannon'a gerçek sıçrama (splash)
+  hasarı (`TowerStats.SplashRadius`, `State.resolveHit`) — ikisi de öncesinde
+  Archer'dan strictly dominate ediliyordu.
+- **Asset istisnası (kule görselleri):** proje sahibinin açık isteğiyle
+  kule sprite'ları için "tamamen prosedürel, asset yok" kuralı bilinçli
+  olarak esnetildi. `public/towers/{archer,cannon,frost}.png` — Kenney'in
+  CC0 lisanslı "Tower Defense" paketinden (bkz.
+  `public/towers/KENNEY-LICENSE.txt`) seçilmiş üç görsel, Vite tarafından
+  olduğu gibi `dist/`'e kopyalanır. `Interop/Pixi.fs`'e `Texture`/`Sprite`
+  binding'leri eklendi; `View/Render.fs` kuleleri artık `Graphics` yerine
+  `Sprite` ile çiziyor (seviyeye göre boyut hâlâ `towerDisplayHeight`,
+  seviyeye göre ton hâlâ mevcut `towerShade` dizileriyle — `Sprite.tint`
+  üzerinden gerçek sanata uygulanıyor). Düşmanlar, grid, yol, efektler ve
+  menzil/önizleme örtüleri hâlâ tamamen prosedürel — istisna yalnızca kule
+  görselleriyle sınırlı.
 
 ### Aşama 5 — Mobil Paketleme (Gün 13–14)
 
@@ -89,11 +110,12 @@ olmadan geçilmez.
 | `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType` (Cannon = `SplashRadius`'lu alan hasarı, Frost = `slowSpeedFactor`/`slowDurationSeconds`'lı yavaşlatma), `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `Gold`, `Lives`, `DeltaTime`, `PathProgress`, `Path`, `EnemyType`, `Enemy` (`Slow` sayacı dahil) ve saf yardımcıları |
 | `src/State.fs` | Durum makinesi: `Interaction`, `WavePhase`/`WaveState`, `GameStatus`, `Waves` (zorluk eğrisi), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, tick hattı (dalga→hareket/can→savaş [hedef + Cannon sıçraması `resolveHit` ile birleşik çözülür]→dalga sonu), `update` |
 | `src/Ui.fs` | Saf UI katmanı: `Layout` (path sınırlarından türetilen canvas geometrisi + hit test), `UiModel` (hover/ghost/notice/atış izleri/`Effect` patlamaları/`LifeFlash`/tek seferlik `SoundCue` kuyruğu/`Muted` tercihi), `UiMsg`, `isLowLives`, `updateUi` |
-| `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri (yalnızca kullanılan yüzey) |
+| `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri: `Graphics` (prosedürel çizim yüzeyi) + `Texture`/`Sprite` (kule görselleri için, `loadTexture`/`createSprite`) |
 | `src/Interop/React.fs` | Minimal React 18 binding'leri + Feliz-vari HTML DSL |
 | `src/Interop/Dom.fs` | Üç DOM dokunuşu (getElementById/appendChild/globalThis) |
 | `src/Interop/Audio.fs` | Minimal el yazımı Web Audio API binding'leri (AudioContext + osilatör/gain zarfı ile prosedürel ton üretimi, asset yok) |
-| `src/View/Render.fs` | Prosedürel çizim: grid, kuleler (tip=şekil, seviye=boy/ton/pip), düşmanlar, menzil daireleri, drop önizleme, drag ghost, patlama efektleri (öldürme/merge/spawn), can kaybı ekran flaşı |
+| `src/View/Render.fs` | Grid, yol, düşmanlar, menzil daireleri, drop önizleme, patlama efektleri, can kaybı flaşı hâlâ prosedürel (`Graphics`); kuleler + sürükleme hayaleti artık gerçek sanat (`Sprite`, bkz. `public/towers/`), seviye boyut/ton/pip mantığı korundu |
+| `public/towers/` | Kule sprite'ları (Kenney CC0 "Tower Defense" paketinden, bkz. `KENNEY-LICENSE.txt`) — Vite tarafından olduğu gibi `dist/`'e kopyalınır |
 | `src/View/Hud.fs` | React HUD: altın/dalga/düşman sayacı (düşük can uyarı stiliyle), satın alma butonu, ses açma/kapama düğmesi, bildirim satırı |
 | `src/View/Sound.fs` | `Ui.SoundCue` değerlerini prosedürel Web Audio tonlarına eşler (AudioContext'i uygulama ömrü boyunca elinde tutar) |
 | `src/App.fs` | Kompozisyon kökü (tek impure modül): Pixi app, ticker→`Frame dt`, pointer→`Msg`, mini-MVU döngüsü, her dispatch sonrası ses kuyruğunun çalınması, e2e debug kancası |
