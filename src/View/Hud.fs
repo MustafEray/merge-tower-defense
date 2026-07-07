@@ -44,7 +44,9 @@ let private buyButton (model: UiModel) (dispatch: UiMsg -> unit) (towerType: Tow
           "className", box (sprintf "hud-buy hud-buy-%s" (name.ToLowerInvariant()))
           "disabled", box (not (canBuy model))
           "onClick", box (fun (_: obj) -> dispatch (Buy towerType)) ]
-        [ str (sprintf "%s — %dg" name (nextTowerCost model.Game)) ]
+        [ span [ "className", box "hud-buy-glyph" ] []
+          span [ "className", box "hud-buy-label" ] [ str name ]
+          span [ "className", box "hud-buy-cost" ] [ str (sprintf "%dg" (nextTowerCost model.Game)) ] ]
 
 let private muteButton (model: UiModel) (dispatch: UiMsg -> unit) =
     button

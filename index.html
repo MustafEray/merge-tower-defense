@@ -174,11 +174,14 @@
       letter-spacing: 0.04em;
       cursor: pointer;
       white-space: nowrap;
+      transition: border-color 120ms ease, color 120ms ease, transform 80ms ease;
     }
     .hud-mute:hover { border-color: var(--brass); color: var(--ink); }
+    .hud-mute:active { transform: translateY(1px); }
     .hud-mute:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
     .hud-stats { display: flex; flex-direction: column; gap: 6px; }
     .hud-stat {
+      position: relative;
       display: flex;
       justify-content: space-between;
       align-items: baseline;
@@ -187,7 +190,23 @@
       border-radius: 2px;
       padding: 7px 10px;
       font-size: 13.5px;
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
     }
+    /* Brass rivets, echoing the panel's own corner brackets at a smaller
+       scale — the same "instrument fitting" motif applied to every plate. */
+    .hud-stat::before,
+    .hud-stat::after {
+      content: "";
+      position: absolute;
+      top: 4px;
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: var(--brass-dim);
+      opacity: 0.8;
+    }
+    .hud-stat::before { left: 5px; }
+    .hud-stat::after { right: 5px; }
     .hud-stat-label {
       color: var(--ink-dim);
       font-size: 10.5px;
@@ -217,6 +236,9 @@
     .hud-shop { display: flex; flex-direction: column; gap: 7px; }
     .hud-buy {
       appearance: none;
+      display: flex;
+      align-items: center;
+      gap: 9px;
       border: 1px solid var(--panel-border);
       border-radius: 2px;
       padding: 9px 12px;
@@ -225,14 +247,37 @@
       letter-spacing: 0.04em;
       text-transform: uppercase;
       cursor: pointer;
-      transition: filter 120ms ease, border-color 120ms ease;
+      transition: filter 120ms ease, border-color 120ms ease, transform 80ms ease;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 -3px 4px rgba(0, 0, 0, 0.16);
+    }
+    .hud-buy-label { flex: 1 1 auto; text-align: left; }
+    /* Keep the currency suffix as lowercase "g" — the button's own
+       uppercase transform would otherwise turn "28g" into "28G". */
+    .hud-buy-cost { font-family: var(--mono-font); font-weight: 600; text-transform: none; }
+    /* A tiny per-type glyph — the same shape language the board itself once
+       used before real tower art (circle/square/diamond), now a quick-scan
+       icon instead of a redundant colour swatch. */
+    .hud-buy-glyph {
+      width: 11px;
+      height: 11px;
+      flex-shrink: 0;
+      background: currentColor;
+      opacity: 0.92;
     }
     .hud-buy-archer { background: var(--pine); color: var(--pine-ink); }
     .hud-buy-cannon { background: var(--rust); color: var(--rust-ink); }
     .hud-buy-frost  { background: var(--steel); color: var(--steel-ink); }
+    .hud-buy-archer .hud-buy-glyph { border-radius: 50%; }
+    .hud-buy-cannon .hud-buy-glyph { border-radius: 3px; }
+    .hud-buy-frost  .hud-buy-glyph { border-radius: 2px; transform: rotate(45deg); }
     .hud-buy:hover:not(:disabled) { filter: brightness(1.14); border-color: var(--brass); }
+    .hud-buy:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+    }
     .hud-buy:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
     .hud-buy:disabled { background: var(--stat-bg); color: var(--ink-dim); border-color: var(--stat-border); cursor: not-allowed; }
+    .hud-buy:disabled .hud-buy-glyph { opacity: 0.5; }
     .hud-gameover {
       display: flex;
       flex-direction: column;
@@ -256,8 +301,11 @@
       color: var(--rust-ink);
       background: var(--rust);
       cursor: pointer;
+      transition: filter 120ms ease, transform 80ms ease;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 -3px 4px rgba(0, 0, 0, 0.16);
     }
     .hud-restart:hover { filter: brightness(1.14); }
+    .hud-restart:active { transform: translateY(1px); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35); }
     .hud-restart:focus-visible { outline: 2px solid var(--brass); outline-offset: 1px; }
     .hud-notice {
       font-size: 12px;
