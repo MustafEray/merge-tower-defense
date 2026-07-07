@@ -130,6 +130,15 @@ olmadan geçilmez.
   `pruneTowerSpritePool` ile yok ediliyor. Diğer katmanlar (Graphics tabanlı
   grid/düşman/efekt/atış) zaten ucuz "clear+yeniden çiz" deseninde, oyunun
   ölçeği (NxN ≤ 12×12) göz önüne alınınca ek optimizasyon gerektirmiyor.
+- **Uygulama ikonu ve açılış ekranı:** Capacitor'ın varsayılan placeholder
+  ikonu/beyaz splash'ı, War Table temasıyla üretilen gerçek görsellerle
+  değiştirildi — koyu orman yeşili zemin (`#182019`), pirinç halka, ortada
+  `public/towers/archer.png` (aynı Kenney CC0 kule sanatı). Android'in tüm
+  yoğunluk/legacy/adaptive/round ikon varyantları ve tüm
+  `drawable(-land/port)-*/splash.png` yoğunlukları bir Python/Pillow
+  betiğiyle (tek seferlik, depoya eklenmedi) üretildi; web favicon'u da
+  (`public/favicon.png`) aynı ikondan türetildi. `ic_launcher_background.xml`
+  aynı zemin rengine güncellendi.
 - Sürüm çıkışı: bkz. `package.json` `version` ve `README.md`.
 
 ## Kod Haritası

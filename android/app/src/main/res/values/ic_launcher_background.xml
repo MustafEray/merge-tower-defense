@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- War Table theme: dark forest green, matching index.html's --bg. -->
+    <color name="ic_launcher_background">#182019</color>
 </resources>
