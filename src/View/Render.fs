@@ -138,14 +138,14 @@ let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) :
     (match waypointsPx with
      | [] -> ()
      | (x0, y0) :: rest ->
-         g.lineStyle (laneWidthPx layout, 0x202433, 1.0) |> ignore
+         g.lineStyle (laneWidthPx layout, 0x1b2018, 1.0) |> ignore
          g.moveTo (x0, y0) |> ignore
 
          for x, y in rest do
              g.lineTo (x, y) |> ignore
 
          // Centre line on top of the strip.
-         g.lineStyle (3.0, 0x3a415f, 1.0) |> ignore
+         g.lineStyle (3.0, 0x5f7a5a, 1.0) |> ignore
          g.moveTo (x0, y0) |> ignore
 
          for x, y in rest do
@@ -169,7 +169,7 @@ let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) :
             let vx, vy = -uy, ux // perpendicular
 
             g
-                .lineStyle(2.0, 0x4c557a, 1.0)
+                .lineStyle(2.0, 0x7c8a6a, 1.0)
                 .moveTo(px - ux * 4.0 + vx * 5.0, py - uy * 4.0 + vy * 5.0)
                 .lineTo(px + ux * 4.0, py + uy * 4.0)
                 .lineTo(px - ux * 4.0 - vx * 5.0, py - uy * 4.0 - vy * 5.0)
@@ -181,7 +181,7 @@ let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) :
      | (sx, sy) :: _ ->
          g
              .lineStyle(3.0, 0x66bb6a, 0.9)
-             .beginFill(0x1a1d29, 1.0)
+             .beginFill(0x141b16, 1.0)
              .drawCircle(sx, sy, 13.0)
              .endFill ()
          |> ignore)
@@ -191,7 +191,7 @@ let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) :
      | Some(gx, gy) ->
          g
              .lineStyle(3.0, 0xef5350, 0.9)
-             .beginFill(0x1a1d29, 1.0)
+             .beginFill(0x141b16, 1.0)
              .drawCircle(gx, gy, 13.0)
              .endFill()
              .lineStyle(0.0, 0, 0.0)
@@ -205,10 +205,10 @@ let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) :
         for col in 0 .. n - 1 do
             let x = layout.GridLeft + float col * cell
             let y = layout.GridTop + float row * cell
-            let fill = if (row + col) % 2 = 0 then 0x232738 else 0x1f2333
+            let fill = if (row + col) % 2 = 0 then 0x1c231d else 0x171d16
 
             g
-                .lineStyle(1.0, 0x2f3450, 1.0)
+                .lineStyle(1.0, 0x2c3a2a, 1.0)
                 .beginFill(fill, 1.0)
                 .drawRect(x, y, cell, cell)
                 .endFill ()

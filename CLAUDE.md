@@ -80,7 +80,14 @@ olmadan geçilmez.
   ekran flaşı (`Ui.LifeFlash`) — `Shots` ile aynı fade-then-expire deseni.
 - Ses: `Ui.SoundCue` + `View/Sound.fs` (prosedürel Web Audio tonları, asset
   yok) ve HUD'da ses açma/kapama düğmesi (`Ui.Muted`).
-- UI/UX: düşük can HUD uyarısı (`Ui.isLowLives`).
+- UI/UX: düşük can HUD uyarısı (`Ui.isLowLives`); HUD'un tüm görsel kimliği
+  "War Table" temasına göre yeniden tasarlandı (proje sahibinin isteğiyle,
+  gerçek kule görselleriyle uyumlu olsun diye) — pirinç köşe dirsekleri,
+  büyük harf serif başlık, monospace veri okumaları, kule tipine göre
+  renklendirilmiş satın alma butonları (`index.html`'deki CSS custom
+  property'ler). Canvas'ın statik zemin/yol tonları (`View/Render.fs`
+  `drawStatic`) da aynı paletle hafifçe uyarlandı; kule/düşman/efekt
+  renkleri (tip kimliği) değişmedi.
 - Oyun dengesi: Frost'a gerçek yavaşlatma (chill) etkisi (`Enemy.Slow`,
   `slowSpeedFactor`/`slowDurationSeconds`), Cannon'a gerçek sıçrama (splash)
   hasarı (`TowerStats.SplashRadius`, `State.resolveHit`) — ikisi de öncesinde
@@ -122,7 +129,7 @@ olmadan geçilmez.
 | `src/MergeTowerDefense.fsproj` | Uygulama projesi (Fable ile derlenir) |
 | `tests/Tests.fs` | Bağımlılıksız mini test koşucusu ile saf birim testleri (core + Ui) |
 | `tests/Tests.fsproj` | Test projesi (saf dosyalar + testler; interop dosyaları dahil edilmez) |
-| `index.html` | Vite giriş noktası; `#hud-root` (React) ve `#game-root` (Pixi) izole kökler |
+| `index.html` | Vite giriş noktası; `#hud-root` (React) ve `#game-root` (Pixi) izole kökler; HUD'un "War Table" görsel kimliği (CSS custom property token'ları) burada tanımlı |
 | `scripts/verify-e2e.mjs` | Headless Chromium ile uçtan uca doğrulama (satın alma, drag-merge, döngü) |
 
 ## Komutlar

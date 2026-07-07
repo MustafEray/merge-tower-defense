@@ -33,7 +33,7 @@ let private start () =
         createApplication
             [ "width", box layout.CanvasWidth
               "height", box layout.CanvasHeight
-              "background", box 0x141724
+              "background", box 0x10160f
               "antialias", box true ]
 
     app.ticker.maxFPS <- 60.0
