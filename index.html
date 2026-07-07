@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#10160f">
   <title>Merge Tower Defense</title>
   <link rel="icon" href="data:,">
   <style>
@@ -39,9 +43,22 @@
       --mono-font: "SF Mono", Consolas, "Courier New", monospace;
     }
     * { box-sizing: border-box; }
+    /* App-like feel, not a document: no rubber-band bounce and no
+       pull-to-refresh fighting the game's own drag/pointer handling once
+       wrapped in Capacitor's WebView. Scrolling itself stays available (not
+       forced off) as a safety net on short viewports — the board is a fixed
+       size and can outgrow a small phone screen in portrait. */
+    html, body {
+      min-height: 100%;
+      overscroll-behavior: none;
+      touch-action: manipulation;
+    }
     body {
       margin: 0;
-      min-height: 100vh;
+      /* dvh accounts for mobile browser chrome show/hide; vh is the
+         fallback for engines that don't support it yet. */
+      height: 100vh;
+      height: 100dvh;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -50,19 +67,55 @@
         var(--bg);
       color: var(--ink);
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      /* No text-select/callout on long-press: this is a game board, not a
+         document, and a native-feeling touch target shouldn't pop a
+         selection/copy menu or magnifier. */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
     }
+    /* Side-by-side on wide viewports; an explicit column switch (not
+       flex-wrap) on narrow ones, so the canvas row can reliably claim
+       "whatever height is left after the HUD" via flex-grow on a single
+       cross-axis line — flex-wrap gives each stacked item its own line and
+       won't distribute leftover height the same way. */
     #app {
       display: flex;
-      flex-wrap: wrap;
+      flex-direction: row;
       gap: 20px;
       align-items: flex-start;
       justify-content: center;
-      padding: 20px;
+      width: 100%;
+      height: 100%;
+      padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+        max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
     }
-    /* HUD (React) and game canvas (PixiJS) live in separate roots. */
-    #hud-root { width: 250px; }
+    /* HUD (React) and game canvas (PixiJS) live in separate roots. The
+       canvas root gets whatever space the HUD doesn't take and shrinks the
+       (fixed-resolution) Pixi canvas to fit it, preserving aspect ratio —
+       the board is a fixed size in game-logic pixels but must still fit a
+       phone screen shorter than that in portrait. */
+    #hud-root { width: 250px; flex-shrink: 0; }
+    #game-root {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    @media (max-width: 720px) {
+      #app { flex-direction: column; align-items: center; }
+      #hud-root { width: 100%; max-width: 360px; flex-shrink: 0; }
+      #game-root { width: 100%; }
+    }
     #game-root canvas {
       display: block;
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
       border-radius: 3px;
       border: 1px solid var(--panel-border);
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);

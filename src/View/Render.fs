@@ -53,21 +53,32 @@ let private enemyColor (enemyType: EnemyType) =
 // Layers
 // ---------------------------------------------------------------------------
 
+/// A tower Sprite kept alive across frames, plus the one native-size
+/// reading (taken once at creation, before any scale is applied) needed to
+/// recompute its scale if the tower's rank changes. Not private: it's a
+/// field type on the (public) Layers record.
+type PooledTowerSprite = { Sprite: Sprite; NativeHeight: float }
+
 /// Draw order, bottom to top: static board, overlay (highlights + ranges),
 /// tower sprites + their pip decorations, enemies, burst effects, shot
 /// tracers, drag ghost, life-lost flash.
 type Layers =
     { Static: Graphics
       Overlay: Graphics
-      /// Real tower art (Sprite children), cleared and rebuilt every frame.
+      /// Real tower art (Sprite children). Retained across frames and keyed
+      /// by TowerId — recreating a Sprite every frame for towers that just
+      /// sit there is wasted allocation/GC pressure, most felt on mobile.
       TowerSprites: Container
+      TowerSpritePool: System.Collections.Generic.Dictionary<int, PooledTowerSprite>
       /// Level pips drawn under/over the sprites; a Graphics layer since
       /// pips are small procedural dots, not art.
       TowerDecor: Graphics
       Enemies: Graphics
       Effects: Graphics
       Shots: Graphics
-      /// The drag ghost's Sprite (0 or 1 children), cleared every frame.
+      /// The drag ghost's Sprite (0 or 1 children), cleared every frame —
+      /// at most one, and only ever alive for the length of a drag, so
+      /// pooling it would add bookkeeping without a real payoff.
       Ghost: Container
       Flash: Graphics }
 
@@ -85,6 +96,7 @@ let createLayers (app: Application) : Layers =
     { Static = makeGraphics ()
       Overlay = makeGraphics ()
       TowerSprites = makeContainer ()
+      TowerSpritePool = System.Collections.Generic.Dictionary()
       TowerDecor = makeGraphics ()
       Enemies = makeGraphics ()
       Effects = makeGraphics ()
@@ -218,10 +230,8 @@ let drawStatic (layout: Layout) (size: GridSize) (path: Path) (layers: Layers) :
 // Shape helpers shared by placed towers and the drag ghost
 // ---------------------------------------------------------------------------
 
-/// Places one tower's real-art Sprite into `container`, tinted by the same
-/// per-rank shade the game has always used (Sprite.tint multiplies the
-/// texture's colour, so the art still darkens/lightens by level). Used for
-/// both placed towers and the drag ghost.
+/// Places a fresh, one-off tower Sprite — used only for the drag ghost,
+/// which is short-lived and never pooled (see Layers.Ghost).
 let private placeTowerSprite
     (textures: TowerTextures)
     (container: Container)
@@ -248,6 +258,56 @@ let private placeTowerSprite
     sprite.tint <- towerShade tower.Type rank
 
     container.addChild sprite |> ignore
+
+/// Creates (once) or reuses a placed tower's pooled Sprite, updating its
+/// transform/tint in place — no per-frame allocation once the sprite
+/// exists, which matters at 60fps on mobile. Stale entries (towers moved,
+/// merged away, or killed) are swept by `pruneTowerSpritePool`.
+let private syncTowerSprite
+    (textures: TowerTextures)
+    (pool: System.Collections.Generic.Dictionary<int, PooledTowerSprite>)
+    (container: Container)
+    (x: float)
+    (y: float)
+    (tower: Tower)
+    : unit =
+    let id = TowerId.value tower.Id
+
+    let pooled =
+        match pool.TryGetValue id with
+        | true, existing -> existing
+        | false, _ ->
+            let sprite = createSprite (textureFor textures tower.Type)
+            sprite.anchor.x <- 0.5
+            sprite.anchor.y <- 0.5
+            let entry = { Sprite = sprite; NativeHeight = sprite.height }
+            container.addChild sprite |> ignore
+            pool.[id] <- entry
+            entry
+
+    let rank = TowerLevel.rank tower.Level
+    let scale = if pooled.NativeHeight > 0.0 then towerDisplayHeight rank / pooled.NativeHeight else 1.0
+
+    pooled.Sprite.scale.x <- scale
+    pooled.Sprite.scale.y <- scale
+    pooled.Sprite.position.x <- x
+    pooled.Sprite.position.y <- y
+    pooled.Sprite.tint <- towerShade tower.Type rank
+
+/// Removes and destroys pooled sprites for towers no longer on the board.
+let private pruneTowerSpritePool
+    (pool: System.Collections.Generic.Dictionary<int, PooledTowerSprite>)
+    (container: Container)
+    (liveIds: Set<int>)
+    : unit =
+    let staleIds =
+        pool.Keys |> Seq.filter (fun id -> not (Set.contains id liveIds)) |> Seq.toList
+
+    for id in staleIds do
+        let entry = pool.[id]
+        container.removeChild entry.Sprite |> ignore
+        entry.Sprite.destroy ()
+        pool.Remove id |> ignore
 
 /// White pips below a tower repeat its level for colour-blind readability —
 /// kept procedural (small dots) even though the tower body is now real art.
@@ -416,7 +476,7 @@ let private drawLifeFlash (layout: Layout) (lifeFlash: float) (g: Graphics) : un
 let drawFrame (textures: TowerTextures) (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     let overlay = layers.Overlay
     overlay.clear () |> ignore
-    layers.TowerSprites.removeChildren () |> ignore
+    // Tower sprites are retained/pooled (see syncTowerSprite), not cleared.
     layers.TowerDecor.clear () |> ignore
     layers.Enemies.clear () |> ignore
     layers.Effects.clear () |> ignore
@@ -473,10 +533,19 @@ let drawFrame (textures: TowerTextures) (layout: Layout) (model: UiModel) (layer
              | Empty -> ()
          | None -> ())
 
-    // Towers on the board.
-    for coord, tower in Grid.towers model.Game.Grid do
+    // Towers on the board: sync the pool to the current set first (so a
+    // tower that just merged away is gone before anything new is added),
+    // then update/create each live tower's sprite in place.
+    let boardTowers = Grid.towers model.Game.Grid
+
+    let liveTowerIds =
+        boardTowers |> List.map (fun (_, t) -> TowerId.value t.Id) |> Set.ofList
+
+    pruneTowerSpritePool layers.TowerSpritePool layers.TowerSprites liveTowerIds
+
+    for coord, tower in boardTowers do
         let x, y = cellCenter layout coord
-        placeTowerSprite textures layers.TowerSprites x y tower 1.0
+        syncTowerSprite textures layers.TowerSpritePool layers.TowerSprites x y tower
         drawTowerPips layers.TowerDecor x y tower 1.0
 
     // Enemies along the path.

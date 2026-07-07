@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Merge Tower Defense</string>
+    <string name="title_activity_main">Merge Tower Defense</string>
+    <string name="package_name">com.mustaferay.mergetowerdefense</string>
+    <string name="custom_url_scheme">com.mustaferay.mergetowerdefense</string>
+</resources>

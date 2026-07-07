@@ -74,7 +74,7 @@ olmadan geçilmez.
 - Aşama 2'nin UI placeholder'ları (altın/dalga) ve demo düşman üreteci
   kaldırıldı; ekonomi ve dalgalar artık çekirdekte.
 
-### Aşama 4 — Cila (Gün 11–12)
+### Aşama 4 — Cila (Gün 11–12) ✅ TAMAMLANDI
 
 - Animasyon: `Ui.Effect` (`KillBurst`/`MergeFlash`/`SpawnPop`) ve can kaybı
   ekran flaşı (`Ui.LifeFlash`) — `Shots` ile aynı fade-then-expire deseni.
@@ -105,10 +105,32 @@ olmadan geçilmez.
   menzil/önizleme örtüleri hâlâ tamamen prosedürel — istisna yalnızca kule
   görselleriyle sınırlı.
 
-### Aşama 5 — Mobil Paketleme (Gün 13–14)
+### Aşama 5 — Mobil Paketleme (Gün 13–14, proje sahibi onayıyla başlatıldı)
 
-- Capacitor entegrasyonu, dokunmatik optimizasyon, performans profili,
-  sürüm çıkışı.
+- **Capacitor entegrasyonu:** `@capacitor/core` + `@capacitor/android`,
+  `capacitor.config.json` (`webDir: dist`, `backgroundColor` yeni HUD
+  temasıyla eşleşiyor). `android/` native projesi `npx cap add android` ile
+  scaffold edildi ve depoya eklendi (build çıktıları hariç — Capacitor'ın
+  kendi `android/.gitignore`'u zaten `build/`, `local.properties` vb.'yi
+  kapsıyor). `npm run cap:sync` → build + `cap sync android`. Not: bu
+  ortamda Android SDK/Gradle ağ erişimi yok, dolayısıyla native proje
+  doğrulandı (scaffold + sync akışı çalışıyor) ama gerçek APK derlemesi
+  Android Studio kurulu bir makinede yapılmalı.
+- **Dokunmatik optimizasyon:** `viewport-fit=cover` + safe-area padding
+  (çentikli cihazlar), `overscroll-behavior: none` (pull-to-refresh/rubber-
+  band yok), `-webkit-user-select`/`-webkit-touch-callout: none` (uzun
+  basmada metin seçimi/büyüteç yok), `#app`'in dar viewport'larda satırdan
+  sütuna geçmesi (720px medya sorgusu) ve `#game-root canvas`'ın
+  `max-width/max-height:100%` ile mevcut alana orantılı küçülmesi — Pixi'nin
+  kendi pointer/touch koordinat dönüşümü CSS ile ölçeklenmiş tuvalde de
+  doğru çalışıyor (gerçek sürükle-bırak ile küçük ekranda doğrulandı).
+- **Performans profili:** kule sprite'ları artık `TowerId`'e göre havuzlanıp
+  (`Layers.TowerSpritePool`) kare başına yeniden oluşturulmuyor — sadece
+  yeni/değişen kuleler için Sprite yaratılıyor, tahtadan düşen kuleninki
+  `pruneTowerSpritePool` ile yok ediliyor. Diğer katmanlar (Graphics tabanlı
+  grid/düşman/efekt/atış) zaten ucuz "clear+yeniden çiz" deseninde, oyunun
+  ölçeği (NxN ≤ 12×12) göz önüne alınınca ek optimizasyon gerektirmiyor.
+- Sürüm çıkışı: bkz. `package.json` `version` ve `README.md`.
 
 ## Kod Haritası
 
@@ -121,7 +143,7 @@ olmadan geçilmez.
 | `src/Interop/React.fs` | Minimal React 18 binding'leri + Feliz-vari HTML DSL |
 | `src/Interop/Dom.fs` | Üç DOM dokunuşu (getElementById/appendChild/globalThis) |
 | `src/Interop/Audio.fs` | Minimal el yazımı Web Audio API binding'leri (AudioContext + osilatör/gain zarfı ile prosedürel ton üretimi, asset yok) |
-| `src/View/Render.fs` | Grid, yol, düşmanlar, menzil daireleri, drop önizleme, patlama efektleri, can kaybı flaşı hâlâ prosedürel (`Graphics`); kuleler + sürükleme hayaleti artık gerçek sanat (`Sprite`, bkz. `public/towers/`), seviye boyut/ton/pip mantığı korundu |
+| `src/View/Render.fs` | Grid, yol, düşmanlar, menzil daireleri, drop önizleme, patlama efektleri, can kaybı flaşı hâlâ prosedürel (`Graphics`); kuleler + sürükleme hayaleti gerçek sanat (`Sprite`, bkz. `public/towers/`), seviye boyut/ton/pip mantığı korundu; yerleştirilmiş kule sprite'ları `TowerId`'e göre havuzlanır (`Layers.TowerSpritePool`/`syncTowerSprite`/`pruneTowerSpritePool`) — kare başına yeniden yaratılmaz |
 | `public/towers/` | Kule sprite'ları (Kenney CC0 "Tower Defense" paketinden, bkz. `KENNEY-LICENSE.txt`) — Vite tarafından olduğu gibi `dist/`'e kopyalınır |
 | `src/View/Hud.fs` | React HUD: altın/dalga/düşman sayacı (düşük can uyarı stiliyle), satın alma butonu, ses açma/kapama düğmesi, bildirim satırı |
 | `src/View/Sound.fs` | `Ui.SoundCue` değerlerini prosedürel Web Audio tonlarına eşler (AudioContext'i uygulama ömrü boyunca elinde tutar) |
@@ -131,6 +153,8 @@ olmadan geçilmez.
 | `tests/Tests.fsproj` | Test projesi (saf dosyalar + testler; interop dosyaları dahil edilmez) |
 | `index.html` | Vite giriş noktası; `#hud-root` (React) ve `#game-root` (Pixi) izole kökler; HUD'un "War Table" görsel kimliği (CSS custom property token'ları) burada tanımlı |
 | `scripts/verify-e2e.mjs` | Headless Chromium ile uçtan uca doğrulama (satın alma, drag-merge, döngü) |
+| `capacitor.config.json` | Capacitor yapılandırması (`webDir: dist`, `backgroundColor`) |
+| `android/` | `npx cap add android` ile scaffold edilen native Android projesi (build çıktıları hariç depoya eklendi) |
 
 ## Komutlar
 
@@ -141,6 +165,12 @@ olmadan geçilmez.
 - `npm run build` — üretim paketi (`dist/`)
 - `npm run verify:e2e` — üretim paketini headless Chromium'da uçtan uca
   doğrular (ekran görüntüleri `out/e2e/` altına düşer)
+- `npm run cap:sync` — üretim paketini derler ve `android/`'a senkronlar
+  (`cap sync android`)
+- `npm run android:open` — Android Studio'yu `android/` projesiyle açar
+  (Android Studio + SDK kurulu bir makinede; bu depo/geliştirme ortamında
+  yalnızca scaffold + sync akışı doğrulanabildi, gerçek APK derlemesi ve
+  cihaz/emülatörde çalıştırma Android SDK gerektirir)
 - dotnet SDK mevcut ortamlarda: `dotnet build src/MergeTowerDefense.fsproj`
   ve Aşama 2'den itibaren `dotnet fable` (Fable 4/5 CLI).
 

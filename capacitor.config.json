@@ -1,0 +1,9 @@
+{
+  "appId": "com.mustaferay.mergetowerdefense",
+  "appName": "Merge Tower Defense",
+  "webDir": "dist",
+  "backgroundColor": "#10160f",
+  "android": {
+    "backgroundColor": "#10160f"
+  }
+}

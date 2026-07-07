@@ -1,6 +1,6 @@
 {
   "name": "merge-tower-defense",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Merge Tower Defense — pure F# core compiled to JS with Fable",
   "type": "module",
@@ -12,10 +12,13 @@
     "dev": "npm run build:app && vite",
     "build": "npm run build:app && vite build",
     "preview": "vite preview",
-    "verify:e2e": "npm run build && node scripts/verify-e2e.mjs"
+    "verify:e2e": "npm run build && node scripts/verify-e2e.mjs",
+    "cap:sync": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android"
   },
   "license": "MIT",
   "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
     "dirname-filename-esm": "^1.1.2",
     "fable-compiler-js": "^3.3.0",
     "fable-standalone": "3.7.0",
@@ -23,6 +26,8 @@
     "vite": "^5.4.21"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
     "pixi.js": "^7.4.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

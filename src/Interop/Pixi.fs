@@ -17,6 +17,7 @@ type Point =
 /// returns `this`, which the bindings surface where chaining helps.
 type Container =
     abstract addChild: child: Container -> Container
+    abstract removeChild: child: Container -> Container
     abstract removeChildren: unit -> unit
     abstract position: Point
     abstract scale: Point
@@ -25,6 +26,9 @@ type Container =
     abstract hitArea: obj with get, set
     abstract cursor: string with get, set
     abstract on: eventName: string * handler: (obj -> unit) -> Container
+    /// Releases this display object's own GPU/transform resources. Called
+    /// with no options, so a Sprite's (shared, pooled) Texture survives.
+    abstract destroy: unit -> unit
 
 /// A single loaded image (Kenney's CC0 tower art — see public/towers/). Kept
 /// opaque: Sprite reads its native pixel size before any scale is applied.
