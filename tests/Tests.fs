@@ -504,6 +504,19 @@ let private testWaves () =
     check "spawn interval shrinks but stays positive"
         (Waves.spawnInterval 20 < Waves.spawnInterval 1 && Waves.spawnInterval 99 > 0.0)
 
+    // Boss count used to double every 5 waves (wave/5), which combined
+    // with the health multiplier to make wave 10 demand roughly 3x wave
+    // 5's total enemy HP in a single step — a spike players couldn't see
+    // coming, not a curve. Boss count now grows every 10 waves instead, so
+    // wave 10 still has just the one boss wave 5 introduced.
+    let bossesOf wave =
+        Waves.composition wave |> List.filter (fun t -> t = Boss) |> List.length
+
+    check "wave 10 still has only one boss" (bossesOf 10 = 1)
+    check "boss count doubles only at wave 15, not wave 10" (bossesOf 15 = 2)
+    check "health multiplier at wave 10 is meaningfully softer than before"
+        (abs (Waves.healthMultiplier 10 - 2.35) < 1e-9)
+
     // Scaled health is applied to spawned enemies.
     let sw, _ = fresh () |> run [ Tick(dt 5.01) ]
     check "wave enemies use scaled health"

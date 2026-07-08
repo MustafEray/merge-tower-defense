@@ -63,11 +63,25 @@ module Waves =
     /// Seconds between spawns within a wave; tightens as waves progress.
     let spawnInterval (wave: int) = max 0.45 (1.1 - 0.04 * float wave)
 
-    /// Enemy health scales linearly with the wave number.
-    let healthMultiplier (wave: int) = 1.0 + 0.18 * float (max 1 wave - 1)
+    /// Enemy health scales linearly with the wave number. Deliberately
+    /// gentler than an earlier 0.18/wave: combined with boss count also
+    /// growing every wave, that rate made wave 10 (2 bosses, each already
+    /// 2.62x health) require killing roughly 3x the total enemy HP of wave
+    /// 5 (1 boss at 1.72x) — a spike, not a curve. 0.15 keeps early waves
+    /// (where it matters least) almost unchanged and only meaningfully
+    /// softens waves 10+.
+    let healthMultiplier (wave: int) = 1.0 + 0.15 * float (max 1 wave - 1)
 
     /// Gold awarded for clearing a wave.
     let completionBonus (wave: int) = 20 + 5 * wave
+
+    /// Boss count on a boss wave (every 5th). Grows every 10 waves, not
+    /// every 5 — halving the growth rate versus a naive `wave / 5`, which
+    /// doubled boss count on the very wave (10) where healthMultiplier had
+    /// already made each boss 2.6x tougher, compounding into the spike
+    /// above. Still 1 at wave 5 (the first boss wave) and grows without
+    /// bound for the long run, just more gradually.
+    let private bossCount (wave: int) = 1 + (wave - 5) / 10
 
     /// Spawn order for a wave. Never empty: every wave has at least four
     /// grunts, so entering Spawning with an empty queue is unrepresentable
@@ -76,7 +90,7 @@ module Waves =
         let grunts = List.replicate (3 + wave) Grunt
         let runners = if wave >= 2 then List.replicate (wave - 1) Runner else []
         let tanks = if wave >= 4 then List.replicate ((wave - 2) / 2) Tank else []
-        let bosses = if wave % 5 = 0 then List.replicate (wave / 5) Boss else []
+        let bosses = if wave % 5 = 0 then List.replicate (bossCount wave) Boss else []
         grunts @ runners @ tanks @ bosses
 
 // ---------------------------------------------------------------------------

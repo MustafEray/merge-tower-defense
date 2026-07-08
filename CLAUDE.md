@@ -91,7 +91,14 @@ olmadan geçilmez.
 - Oyun dengesi: Frost'a gerçek yavaşlatma (chill) etkisi (`Enemy.Slow`,
   `slowSpeedFactor`/`slowDurationSeconds`), Cannon'a gerçek sıçrama (splash)
   hasarı (`TowerStats.SplashRadius`, `State.resolveHit`) — ikisi de öncesinde
-  Archer'dan strictly dominate ediliyordu.
+  Archer'dan strictly dominate ediliyordu. Ayrıca dalga 10 civarında oyunu
+  aniden bitiren bir zorluk sıçraması bulundu ve düzeltildi: Boss sayısı
+  eskiden her 5 dalgada bir katlanıyordu (`wave/5`) ki bu, `healthMultiplier`
+  ile birleşince dalga 10'un dalga 5'e göre ~3 kat toplam düşman canı talep
+  etmesine yol açıyordu — bir eğri değil, sıçrama. `Waves.bossCount` artık
+  her 10 dalgada bir katlanıyor (`1 + (wave - 5) / 10`), `healthMultiplier`
+  katsayısı da 0.18'den 0.15'e indirildi (erken dalgalar neredeyse
+  değişmedi, dalga 10+ belirgin şekilde yumuşadı).
 - **Asset istisnası (kule görselleri):** proje sahibinin açık isteğiyle
   kule sprite'ları için "tamamen prosedürel, asset yok" kuralı bilinçli
   olarak esnetildi. `public/towers/{archer,cannon,frost}.png` — Kenney'in
