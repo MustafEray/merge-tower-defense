@@ -39,6 +39,12 @@ let private buyButton (model: UiModel) (dispatch: UiMsg -> unit) (towerType: Tow
           "onClick", box (fun (_: obj) -> dispatch (Buy towerType)) ]
         [ str (sprintf "%s — %dg" name (nextTowerCost model.Game)) ]
 
+let private noticeClass =
+    function
+    | Info -> "hud-notice"
+    | Good -> "hud-notice hud-notice-good"
+    | Bad -> "hud-notice hud-notice-bad"
+
 let view (model: UiModel) (dispatch: UiMsg -> unit) =
     let gameOver =
         match model.Game.Status with
@@ -67,9 +73,31 @@ let view (model: UiModel) (dispatch: UiMsg -> unit) =
               [ buyButton model dispatch Archer
                 buyButton model dispatch Cannon
                 buyButton model dispatch Frost ]
+          div
+              [ "className", box "hud-controls" ]
+              [ (match model.Game.Status, model.Game.Wave.Phase with
+                 | Playing _, BetweenWaves _ ->
+                     button
+                         [ "id", box "call-wave"
+                           "className", box "hud-call"
+                           "onClick", box (fun (_: obj) -> dispatch (GameMsg CallNextWave)) ]
+                         [ str "Call Wave Now" ]
+                 | _ -> nothing)
+                button
+                    [ "id", box "mute"
+                      "className", box "hud-mute"
+                      "title", box "Toggle sound (M)"
+                      "onClick", box (fun (_: obj) -> dispatch ToggleMute) ]
+                    [ str (if model.Muted then "🔇 Sound off" else "🔊 Sound on") ] ]
           gameOver
           div
-              [ "className", box "hud-notice"; "id", box "hud-notice" ]
+              [ "className",
+                box (
+                    match model.Notice with
+                    | Some(_, kind, _) -> noticeClass kind
+                    | None -> "hud-notice"
+                )
+                "id", box "hud-notice" ]
               [ match model.Notice with
-                | Some(text, _) -> str text
-                | None -> str "Drag two matching towers together to merge them." ] ]
+                | Some(text, _, _) -> str text
+                | None -> str "Drag matching towers together to merge. Esc cancels a drag." ] ]

@@ -69,9 +69,15 @@ try {
 
   let state = await debug();
   assert("canvas is mounted", (await page.$("#game-root canvas")) !== null);
-  assert("HUD shows starting gold", (await page.textContent("#hud-gold")) === "110");
+  assert("HUD shows starting gold", (await page.textContent("#hud-gold")) === "120");
   assert("HUD shows starting lives", (await page.textContent("#hud-lives")) === "10");
   assert("game starts before wave 1", state.wave === 0);
+
+  // Mute toggle round-trips through the HUD.
+  await page.click("#mute");
+  assert("mute button mutes", (await debug()).muted === true);
+  await page.click("#mute");
+  assert("mute button unmutes", (await debug()).muted === false);
 
   // The layout comes from the app itself, so pointer math can never drift.
   const { gridLeft, gridTop, cell } = state.layout;
@@ -88,7 +94,7 @@ try {
 
   state = await debug();
   assert("two towers bought", state.towers.length === 2);
-  assert("escalating prices charged", state.gold === 110 - 20 - 24);
+  assert("escalating prices charged", state.gold === 120 - 20 - 24);
   assert(
     "both towers are archers",
     state.towers.every((t) => t.type === "Archer" && t.level === 1)
@@ -126,8 +132,11 @@ try {
     (await page.textContent("#hud-notice")).includes("Merged")
   );
 
-  // Wave 1 starts on the scheduler's clock and spawns enemies.
-  state = await waitForState("wave 1 starts", (s) => s.wave >= 1, 8000);
+  // Call the first wave early instead of waiting out the countdown.
+  await page.click("#call-wave");
+  await page.waitForTimeout(200);
+  state = await debug();
+  assert("called wave starts immediately", state.wave === 1);
   state = await waitForState("wave enemies spawn", (s) => s.enemies > 0, 5000);
   await page.screenshot({ path: `${SHOTS_DIR}/02-wave-active.png` });
 

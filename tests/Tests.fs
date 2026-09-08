@@ -77,6 +77,9 @@ let private livesOf (state: GameState) =
 let private ticks (count: int) (step: float) (state: GameState) : GameState * GameEvent list =
     run [ for _ in 1 .. count -> Tick(dt step) ] state
 
+/// updateUi, keeping only the model — for tests that ignore sound cues.
+let private ui (msg: UiMsg) (model: UiModel) : UiModel = fst (updateUi msg model)
+
 // ---------------------------------------------------------------------------
 // Smart constructors: illegal values have no representation
 // ---------------------------------------------------------------------------
@@ -597,12 +600,12 @@ let private testEconomy () =
     check "buy on an occupied cell is rejected" (hasReject (SpawnCellOccupied(at 0 0)) evs2)
     check "rejected buy does not charge" (goldOf s2 = goldOf s1 && s2.TowersBought = s1.TowersBought)
 
-    // Drain the purse: 110 gold buys towers at 20/24/28/32; the fifth (36) fails.
+    // Drain the purse: 120 gold buys towers at 20/24/28/32; the fifth (36) fails.
     let coords = [ at 0 0; at 0 1; at 0 2; at 0 3; at 0 4 ]
     let drained, evsD = fresh () |> run [ for c in coords -> BuyTower(Archer, c) ]
     check "gold runs out on the fifth tower" (hasReject (NotEnoughGold 36) evsD)
     check "only four towers were bought" (Grid.towerCount drained.Grid = 4)
-    check "remaining balance is correct" (goldOf drained = 110 - 20 - 24 - 28 - 32)
+    check "remaining balance is correct" (goldOf drained = startingGold - 20 - 24 - 28 - 32)
 
     // Clearing a wave pays the completion bonus.
     let beforeClear, _ =
@@ -646,6 +649,89 @@ let private testGameOver () =
     check "ticks after defeat change nothing" (s2 = s && evsTick = [])
     let _, evsBuy = s2 |> run [ BuyTower(Archer, at 0 0) ]
     check "buying after defeat is rejected" (hasReject GameAlreadyOver evsBuy)
+
+// ---------------------------------------------------------------------------
+// Slow effect (Frost's speciality)
+// ---------------------------------------------------------------------------
+
+let private testSlow () =
+    let path = Path.defaultFor size5
+    let enemy, _ = Enemy.spawn EnemyIdGen.initial Grunt
+    let slowed = Enemy.applySlow 0.5 0.3 enemy
+
+    (match Enemy.step path (dt 0.1) slowed, Enemy.step path (dt 0.1) enemy with
+     | Walking s, Walking f ->
+         check "slow scales the movement step"
+             (PathProgress.value s.Progress < PathProgress.value f.Progress)
+         check "slow timer decays while walking"
+             (match s.Slow with
+              | Some effect -> effect.Remaining < 0.3
+              | None -> false)
+     | _ -> check "slow scales the movement step" false)
+
+    (match Enemy.step path (dt 0.4) slowed with
+     | Walking s -> check "slow expires after its duration" (s.Slow = None)
+     | AtGoal -> check "slow expires after its duration" false)
+
+    check "frost stats carry a slow" ((Tower.stats { Id = fst (TowerIdGen.next TowerIdGen.initial)
+                                                     Type = Frost
+                                                     Level = Level1
+                                                     Cooldown = 0.0 }).Slow |> Option.isSome)
+    check "archer stats do not slow" ((Tower.stats { Id = fst (TowerIdGen.next TowerIdGen.initial)
+                                                     Type = Archer
+                                                     Level = Level1
+                                                     Cooldown = 0.0 }).Slow = None)
+
+    // Integration: a frost tower's hit leaves the survivor slowed.
+    let armed, _ =
+        fresh () |> noWaves |> run [ SpawnTower(Frost, at 0 0); SpawnEnemy Tank ]
+
+    let afterHit, _ = armed |> run [ Tick(dt 0.05) ]
+    check "frost hit slows the survivor"
+        (afterHit.Enemies |> List.forall (fun e -> e.Slow |> Option.isSome))
+
+// ---------------------------------------------------------------------------
+// Calling the next wave early
+// ---------------------------------------------------------------------------
+
+let private testCallWave () =
+    let s, evs = fresh () |> run [ CallNextWave ]
+    check "calling skips the countdown" (s.Wave.Number = 1)
+    check "called wave is announced" (evs |> List.contains (WaveStarted 1))
+    check "called wave spawns immediately"
+        (evs |> List.exists (fun e -> match e with EnemySpawned _ -> true | _ -> false))
+
+    let _, evs2 = s |> run [ CallNextWave ]
+    check "calling during a running wave is rejected" (hasReject WaveAlreadyRunning evs2)
+
+// ---------------------------------------------------------------------------
+// Balance smoke tests (simulated play)
+// ---------------------------------------------------------------------------
+
+let private testBalance () =
+    // An undefended board is eventually overrun.
+    let overrun, _ = fresh () |> ticks 300 0.5 // 150 seconds
+    check "no defense eventually loses"
+        (match overrun.Status with
+         | Defeated _ -> true
+         | Playing _ -> false)
+
+    // A modest opening (three archers along the top row) clears wave 1
+    // without losing a life and banks bounties plus the completion bonus.
+    let defended, _ =
+        fresh ()
+        |> run
+            [ SpawnTower(Archer, at 0 0)
+              SpawnTower(Archer, at 0 2)
+              SpawnTower(Archer, at 0 4) ]
+        |> fst
+        |> ticks 200 0.1 // 20 seconds: wave 1 starts at 6s
+
+    check "a modest defense keeps every life" (livesOf defended = startingLives)
+    check "wave 1 is cleared and paid out"
+        (goldOf defended >= startingGold
+                            + 4 * EnemyType.bounty Grunt
+                            + Waves.completionBonus 1)
 
 // ---------------------------------------------------------------------------
 // Immutability spot checks
@@ -726,7 +812,7 @@ let private uiHudTests () =
     let model = init size5
 
     // Buying through the HUD: first empty cell, gold drawn from the core.
-    let m1 = updateUi (Buy Archer) model
+    let m1 = ui (Buy Archer) model
     check "HUD buy places a tower on the first empty cell"
         (match Grid.cellAt (at 0 0) m1.Game.Grid with
          | Occupied t -> t.Type = Archer && t.Level = Level1
@@ -734,28 +820,31 @@ let private uiHudTests () =
     check "HUD buy deducts gold" (goldOf m1.Game = startingGold - towerBaseCost)
 
     check "cannot buy while dragging"
-        (let dragging = updateUi (GameMsg(StartDrag(at 0 0))) m1
+        (let dragging = ui (GameMsg(StartDrag(at 0 0))) m1
          canBuy dragging = false)
 
     check "cannot buy when broke"
-        (let broke =
-            [ 1 .. 4 ] |> List.fold (fun m _ -> updateUi (Buy Archer) m) model
+        (let broke = [ 1 .. 4 ] |> List.fold (fun m _ -> ui (Buy Archer) m) model
          canBuy broke = false)
 
     // Frame: injected time drives the core scheduler.
-    let after6s =
-        [ 1 .. 60 ] |> List.fold (fun m _ -> updateUi (Frame(dt 0.1)) m) model
+    let after7s =
+        [ 1 .. 70 ] |> List.fold (fun m _ -> ui (Frame(dt 0.1)) m) model
 
-    check "frames drive the wave scheduler" (after6s.Game.Wave.Number = 1)
-    check "wave start raises a HUD notice" (after6s.Notice |> Option.isSome)
+    check "frames drive the wave scheduler" (after7s.Game.Wave.Number = 1)
+    check "wave start raises a HUD notice" (after7s.Notice |> Option.isSome)
+    check "wave start raises the banner"
+        (match after7s.Banner with
+         | Some(wave, _) -> wave = 1
+         | None -> false)
 
     // Shot tracers appear when towers fire and fade out.
     let combatModel =
         { model with Game = fst (run [ SpawnTower(Archer, at 0 0); SpawnEnemy Grunt ] (noWaves model.Game)) }
 
-    let firing = updateUi (Frame(dt 0.05)) combatModel
+    let firing = ui (Frame(dt 0.05)) combatModel
     check "tower fire leaves a shot tracer" (not (List.isEmpty firing.Shots))
-    let faded = updateUi (Frame(dt 0.5)) firing
+    let faded = ui (Frame(dt 0.5)) firing
     check "shot tracers fade out" (List.isEmpty faded.Shots)
 
     // Notices: set by noteworthy events, silent otherwise, and they expire.
@@ -764,23 +853,89 @@ let private uiHudTests () =
           GameMsg(SpawnTower(Cannon, at 3 1))
           GameMsg(StartDrag(at 3 0))
           GameMsg(Drop(at 3 1)) ]
-        |> List.fold (fun m msg -> updateUi msg m) { model with Game = noWaves model.Game }
+        |> List.fold (fun m msg -> ui msg m) { model with Game = noWaves model.Game }
 
     check "incompatible merge raises a HUD notice" (mismatch.Notice |> Option.isSome)
+    check "rejection notices are flagged Bad"
+        (match mismatch.Notice with
+         | Some(_, kind, _) -> kind = Bad
+         | None -> false)
     check "notice expires after its time-to-live"
-        (let faded =
-            [ 1 .. 4 ] |> List.fold (fun m _ -> updateUi (Frame(dt 1.0)) m) mismatch
+        (let faded = [ 1 .. 4 ] |> List.fold (fun m _ -> ui (Frame(dt 1.0)) m) mismatch
          faded.Notice = None)
 
     check "plain pointer movement raises no notice"
-        ((updateUi (PointerMoved(Some(at 1 1), Some(10.0, 10.0))) model).Notice = None)
+        ((ui (PointerMoved(Some(at 1 1), Some(10.0, 10.0))) model).Notice = None)
 
     // Restart resets the whole game.
-    let restarted = updateUi Restart after6s
+    let restarted = ui Restart after7s
     check "restart returns to a fresh game"
         (restarted.Game.Wave.Number = 0
          && Grid.towerCount restarted.Game.Grid = 0
          && goldOf restarted.Game = startingGold)
+
+// ---------------------------------------------------------------------------
+// UI juice: effects and sound cues
+// ---------------------------------------------------------------------------
+
+let private uiJuiceTests () =
+    let model = { init size5 with Game = noWaves (init size5).Game }
+
+    // Buying: spawn ring + price float + buy cue.
+    let bought, buyCues = updateUi (Buy Archer) model
+    check "buy spawns a ring effect" (bought.Effects |> List.exists (fun e -> e.Kind = SpawnRing))
+    check "buy floats the price"
+        (bought.Effects
+         |> List.exists (fun e ->
+             match e.Kind with
+             | GoldFloat text -> text = sprintf "-%d" towerBaseCost
+             | _ -> false))
+    check "buy earns a buy cue" (buyCues |> List.contains BuyCue)
+
+    // Effects age and prune.
+    let agedOut = ui (Frame(dt 1.0)) bought
+    check "effects fade out" (agedOut.Effects = [])
+
+    // Merging: ring effect + merge cue.
+    let readyToMerge =
+        [ GameMsg(SpawnTower(Archer, at 3 0))
+          GameMsg(SpawnTower(Archer, at 3 1))
+          GameMsg(StartDrag(at 3 0)) ]
+        |> List.fold (fun m msg -> ui msg m) model
+
+    let merged, mergeCues = updateUi (GameMsg(Drop(at 3 1))) readyToMerge
+    check "merge spawns a ring effect" (merged.Effects |> List.exists (fun e -> e.Kind = MergeRing))
+    check "merge earns a merge cue" (mergeCues |> List.contains MergeCue)
+
+    // Combat over several frames: shoot and kill cues, burst + bounty float.
+    let combat =
+        { model with Game = fst (run [ SpawnTower(Archer, at 0 0); SpawnEnemy Grunt ] model.Game) }
+
+    let killed, combatCues =
+        [ 1 .. 40 ]
+        |> List.fold
+            (fun (m, acc) _ ->
+                let m', cues = updateUi (Frame(dt 0.1)) m
+                let burstSeen =
+                    acc
+                    |> List.contains KillCue
+                    || m'.Effects |> List.exists (fun e -> e.Kind = KillBurst)
+                ignore burstSeen
+                m', acc @ cues)
+            (combat, [])
+
+    check "combat earns shoot cues" (combatCues |> List.contains ShootCue)
+    check "kills earn a kill cue" (combatCues |> List.contains KillCue)
+    check "the grunt is dead" (killed.Game.Enemies = [])
+
+    // Mute silences every cue without changing the game.
+    let mutedModel = ui ToggleMute model
+    check "mute flag toggles" mutedModel.Muted
+    let _, mutedCues = updateUi (Buy Archer) mutedModel
+    check "muted transitions stay silent" (mutedCues = [])
+    check "unmute restores cues"
+        (let unmuted = ui ToggleMute mutedModel
+         snd (updateUi (Buy Archer) unmuted) |> List.contains BuyCue)
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -800,10 +955,14 @@ let main _argv =
     testCombat ()
     testEconomy ()
     testGameOver ()
+    testSlow ()
+    testCallWave ()
+    testBalance ()
     testImmutability ()
     testStats ()
     uiLayoutTests ()
     uiHudTests ()
+    uiJuiceTests ()
 
     printfn ""
     printfn "%d passed, %d failed" passed failed

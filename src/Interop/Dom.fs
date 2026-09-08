@@ -12,3 +12,6 @@ let appendChild (parent: obj) (child: obj) : unit = jsNative
 
 [<Emit("globalThis")>]
 let globalThis: obj = jsNative
+
+[<Emit("window.addEventListener('keydown', $0)")>]
+let onKeyDown (handler: obj -> unit) : unit = jsNative

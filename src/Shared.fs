@@ -152,14 +152,29 @@ type TowerStats =
     { Damage: int
       /// Attack radius in cell units.
       Range: float
-      CooldownMs: int }
+      CooldownMs: int
+      /// Slow applied on hit: (speed factor, duration in seconds).
+      /// Frost's speciality; None for towers that only deal damage.
+      Slow: (float * float) option }
 
 module Tower =
     let private baseStats =
         function
-        | Archer -> { Damage = 4; Range = 3.0; CooldownMs = 600 }
-        | Cannon -> { Damage = 10; Range = 2.0; CooldownMs = 1500 }
-        | Frost -> { Damage = 2; Range = 2.5; CooldownMs = 900 }
+        | Archer ->
+            { Damage = 4
+              Range = 3.0
+              CooldownMs = 600
+              Slow = None }
+        | Cannon ->
+            { Damage = 14
+              Range = 2.2
+              CooldownMs = 1600
+              Slow = None }
+        | Frost ->
+            { Damage = 3
+              Range = 2.6
+              CooldownMs = 800
+              Slow = Some(0.5, 1.2) }
 
     /// Stats derive from type + level and are never stored, so they can
     /// never disagree with the tower they describe.
@@ -169,7 +184,8 @@ module Tower =
 
         { b with
             Damage = b.Damage * pown 2 (r - 1)
-            Range = b.Range + 0.25 * float (r - 1) }
+            Range = b.Range + 0.25 * float (r - 1)
+            Slow = b.Slow |> Option.map (fun (factor, seconds) -> factor, seconds + 0.2 * float (r - 1)) }
 
     /// Attack damage as a validated Damage value. Total by construction:
     /// base damages are strictly positive and doubling keeps them positive.
@@ -306,7 +322,7 @@ module DeltaTime =
     let seconds (DeltaTime s) = s
 
 /// Normalised position along the enemy path, always within [0, 1).
-/// Reaching the end is not a state — it is the ReachedGoal transition — so
+/// Reaching the end is not a state — it is the Enemy.step AtGoal outcome — so
 /// "an enemy standing beyond the exit" is unrepresentable.
 type PathProgress = private PathProgress of float
 
@@ -319,10 +335,6 @@ module PathProgress =
             Some(PathProgress fraction)
         else
             None
-
-type MoveResult =
-    | Moved of PathProgress
-    | ReachedGoal
 
 /// The polyline enemies walk, in cell units: the grid's top-left corner is
 /// (0,0), one unit is one cell edge and cell (row, col) has its centre at
@@ -417,7 +429,7 @@ module EnemyType =
     /// Movement speed in cells per second.
     let speed =
         function
-        | Grunt -> 0.9
+        | Grunt -> 0.85
         | Runner -> 1.8
         | Tank -> 0.55
         | Boss -> 0.45
@@ -425,10 +437,10 @@ module EnemyType =
     /// Gold awarded when the enemy is killed.
     let bounty =
         function
-        | Grunt -> 4
-        | Runner -> 6
-        | Tank -> 12
-        | Boss -> 50
+        | Grunt -> 5
+        | Runner -> 7
+        | Tank -> 14
+        | Boss -> 55
 
     /// Lives lost when the enemy reaches the goal.
     let livesCost =
@@ -438,11 +450,26 @@ module EnemyType =
         | Tank -> 2
         | Boss -> 3
 
+/// A temporary movement debuff (Frost's speciality). Reapplying refreshes
+/// the timer instead of stacking.
+type SlowEffect =
+    { /// Multiplier applied to the enemy's speed while active (0 < f ≤ 1).
+      SpeedFactor: float
+      /// Seconds until the effect wears off.
+      Remaining: float }
+
 type Enemy =
     { Id: EnemyId
       Type: EnemyType
       Health: Health
-      Progress: PathProgress }
+      Progress: PathProgress
+      Slow: SlowEffect option }
+
+/// Outcome of one movement step: the enemy walked (with updated progress
+/// and slow timer) or crossed the goal line.
+type EnemyStep =
+    | Walking of Enemy
+    | AtGoal
 
 module Enemy =
     /// Spawns at the path start; health = type base × multiplier, kept ≥ 1
@@ -456,21 +483,47 @@ module Enemy =
         { Id = id
           Type = enemyType
           Health = Health hp
-          Progress = PathProgress.start },
+          Progress = PathProgress.start
+          Slow = None },
         gen'
 
     let spawn (gen: EnemyIdGen) (enemyType: EnemyType) : Enemy * EnemyIdGen = spawnWith gen enemyType 1.0
 
-    /// Time-based movement along the path (speed is cells per second, so
-    /// the progress delta is normalised by the path length).
-    let advance (path: Path) (dt: DeltaTime) (enemy: Enemy) : MoveResult =
+    /// Applies (or refreshes) a slow debuff.
+    let applySlow (factor: float) (seconds: float) (enemy: Enemy) : Enemy =
+        { enemy with
+            Slow =
+                Some
+                    { SpeedFactor = factor
+                      Remaining = seconds } }
+
+    /// One time step of movement along the path: speed is cells per second
+    /// (normalised by path length), scaled down while a slow is active, and
+    /// the slow timer decays within the same step.
+    let step (path: Path) (dt: DeltaTime) (enemy: Enemy) : EnemyStep =
+        let seconds = DeltaTime.seconds dt
+
+        let factor, slow' =
+            match enemy.Slow with
+            | Some slow ->
+                let remaining = slow.Remaining - seconds
+
+                slow.SpeedFactor, (if remaining > 0.0 then Some { slow with Remaining = remaining } else None)
+            | None -> 1.0, None
+
         let (PathProgress p) = enemy.Progress
 
         let p' =
             p
-            + EnemyType.speed enemy.Type * DeltaTime.seconds dt / Path.length path
+            + EnemyType.speed enemy.Type * factor * seconds / Path.length path
 
-        if p' >= 1.0 then ReachedGoal else Moved(PathProgress p')
+        if p' >= 1.0 then
+            AtGoal
+        else
+            Walking
+                { enemy with
+                    Progress = PathProgress p'
+                    Slow = slow' }
 
     /// Current position in cell units.
     let positionOn (path: Path) (enemy: Enemy) : float * float = Path.positionAt path enemy.Progress

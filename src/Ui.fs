@@ -1,12 +1,12 @@
 /// Pure UI-layer state: everything the render/HUD layers need that is not
 /// core game logic — canvas layout math, pointer-to-cell hit testing, the
-/// transient HUD notice, shot flashes and the frame message that feeds
-/// injected DeltaTime into the core engine.
+/// transient HUD notice, shot tracers, juice effects, the wave banner and
+/// the frame message that feeds injected DeltaTime into the core engine.
 ///
-/// This module stays as pure as Shared/State: no DOM, no PixiJS, no clock.
-/// The interop shells (App.fs, Render.fs, Hud.fs) only send UiMsg values and
-/// read the resulting UiModel. Since Phase 3 the economy (gold/lives) and
-/// waves live in the core engine; this layer no longer holds placeholders.
+/// This module stays as pure as Shared/State: no DOM, no PixiJS, no clock,
+/// no audio API. Sounds leave this layer as data — updateUi returns the
+/// SoundCue list a transition earned, and the impure shell decides how to
+/// play them (mirroring how update returns GameEvents).
 module MergeTowerDefense.Ui
 
 open MergeTowerDefense.Shared
@@ -82,16 +82,65 @@ type Shot =
       Target: float * float
       Ttl: float }
 
+/// Transient, purely visual celebrations. Positions are in cell units.
+type EffectKind =
+    | KillBurst
+    | MergeRing
+    | SpawnRing
+    | LeakFlash
+    | GoldFloat of string
+
+type Effect =
+    { Kind: EffectKind
+      Pos: float * float
+      /// Seconds since the effect was born; pruned past its duration.
+      Age: float }
+
+/// How long each effect kind lives, in seconds.
+let effectDuration =
+    function
+    | KillBurst -> 0.45
+    | MergeRing -> 0.5
+    | SpawnRing -> 0.4
+    | LeakFlash -> 0.5
+    | GoldFloat _ -> 0.9
+
+/// Sounds a transition earned. Pure data; the shell synthesises them.
+type SoundCue =
+    | ShootCue
+    | KillCue
+    | MergeCue
+    | BuyCue
+    | LeakCue
+    | WaveStartCue
+    | WaveClearCue
+    | LostCue
+    | RejectCue
+
+/// Colour family of the HUD notice line.
+type NoticeKind =
+    | Info
+    | Good
+    | Bad
+
 type UiModel =
     { Game: GameState
       /// Cell currently under the pointer, if any.
       Hover: Coord option
       /// Raw pointer position in canvas pixels (drives the drag ghost).
       Pointer: (float * float) option
-      /// Transient HUD message with its remaining time-to-live in seconds.
-      Notice: (string * float) option
+      /// Transient HUD message: text, colour family, remaining seconds.
+      Notice: (string * NoticeKind * float) option
       /// Fading shot tracers for the renderer.
-      Shots: Shot list }
+      Shots: Shot list
+      /// Fading celebration effects for the renderer.
+      Effects: Effect list
+      /// "Wave N" banner: wave number and its age in seconds.
+      Banner: (int * float) option
+      /// Accumulated play-session seconds, for ambient pulses.
+      Clock: float
+      /// Suppresses all sound cues while set.
+      Muted: bool }
 
 type UiMsg =
     /// Forward a message to the core engine untouched.
@@ -102,6 +151,8 @@ type UiMsg =
     | Buy of TowerType
     /// HUD restart after a game over.
     | Restart
+    /// HUD/keyboard mute toggle.
+    | ToggleMute
     /// One render-loop frame worth of injected time.
     | Frame of DeltaTime
 
@@ -110,7 +161,11 @@ let init (size: GridSize) : UiModel =
       Hover = None
       Pointer = None
       Notice = None
-      Shots = [] }
+      Shots = []
+      Effects = []
+      Banner = None
+      Clock = 0.0
+      Muted = false }
 
 // ---------------------------------------------------------------------------
 // HUD-facing helpers
@@ -118,6 +173,7 @@ let init (size: GridSize) : UiModel =
 
 let private noticeTtl = 2.5
 let shotTtl = 0.12
+let bannerDuration = 1.6
 
 let firstEmptyCell (grid: Grid) : Coord option =
     Grid.coords grid |> List.tryFind (fun c -> Grid.cellAt c grid = Empty)
@@ -132,35 +188,70 @@ let canBuy (model: UiModel) : bool =
 
 /// Turns noteworthy game events into a short HUD message, most important
 /// first. Routine noise (plain returns, per-shot events) stays silent.
-let private noticeOf (event: GameEvent) : (int * string) option =
+let private noticeOf (event: GameEvent) : (int * NoticeKind * string) option =
     match event with
-    | GameOver waves -> Some(100, sprintf "Game over — you survived %d wave(s)." waves)
-    | ActionRejected(NotEnoughGold required) -> Some(80, sprintf "Not enough gold (need %d)." required)
-    | ActionRejected(MergeAtMaxLevel _) -> Some(80, "Already at max level.")
-    | ActionRejected(IncompatibleTarget _) -> Some(80, "Towers must share type and level to merge.")
-    | ActionRejected(SpawnCellOccupied _) -> Some(80, "That cell is occupied.")
-    | ActionRejected SpawnWhileDragging -> Some(80, "Finish the drag first.")
-    | TowersMerged(_, _, result, _) -> Some(70, sprintf "Merged! New tower is level %d." (TowerLevel.rank result.Level))
-    | WaveCompleted(wave, bonus) -> Some(60, sprintf "Wave %d cleared! +%d gold." wave bonus)
-    | WaveStarted wave -> Some(50, sprintf "Wave %d incoming!" wave)
-    | LifeLost remaining -> Some(40, sprintf "An enemy got through! %d lives left." remaining)
+    | GameOver waves -> Some(100, Bad, sprintf "Game over — you survived %d wave(s)." waves)
+    | ActionRejected(NotEnoughGold required) -> Some(80, Bad, sprintf "Not enough gold (need %d)." required)
+    | ActionRejected(MergeAtMaxLevel _) -> Some(80, Bad, "Already at max level.")
+    | ActionRejected(IncompatibleTarget _) -> Some(80, Bad, "Towers must share type and level to merge.")
+    | ActionRejected(SpawnCellOccupied _) -> Some(80, Bad, "That cell is occupied.")
+    | ActionRejected SpawnWhileDragging -> Some(80, Bad, "Finish the drag first.")
+    | ActionRejected WaveAlreadyRunning -> Some(80, Bad, "A wave is already running.")
+    | TowersMerged(_, _, result, _) ->
+        Some(70, Good, sprintf "Merged! New tower is level %d." (TowerLevel.rank result.Level))
+    | WaveCompleted(wave, bonus) -> Some(60, Good, sprintf "Wave %d cleared! +%d gold." wave bonus)
+    | WaveStarted wave -> Some(50, Info, sprintf "Wave %d incoming!" wave)
+    | LifeLost remaining -> Some(40, Bad, sprintf "An enemy got through! %d lives left." remaining)
     | _ -> None
 
-let private noticeFor (events: GameEvent list) : string option =
+let private noticeFor (events: GameEvent list) : (string * NoticeKind) option =
     match events |> List.choose noticeOf with
     | [] -> None
-    | picks -> picks |> List.maxBy fst |> snd |> Some
+    | picks ->
+        let _, kind, text = picks |> List.maxBy (fun (priority, _, _) -> priority)
+        Some(text, kind)
+
+let private cueOf (event: GameEvent) : SoundCue option =
+    match event with
+    | TowerFired _ -> Some ShootCue
+    | EnemyKilled _ -> Some KillCue
+    | TowersMerged _ -> Some MergeCue
+    | TowerBought _
+    | TowerSpawned _ -> Some BuyCue
+    | LifeLost _ -> Some LeakCue
+    | WaveStarted _ -> Some WaveStartCue
+    | WaveCompleted _ -> Some WaveClearCue
+    | GameOver _ -> Some LostCue
+    | ActionRejected(NotEnoughGold _)
+    | ActionRejected(MergeAtMaxLevel _)
+    | ActionRejected(IncompatibleTarget _)
+    | ActionRejected(SpawnCellOccupied _)
+    | ActionRejected WaveAlreadyRunning -> Some RejectCue
+    | _ -> None
 
 // ---------------------------------------------------------------------------
 // UI transition function (pure)
 // ---------------------------------------------------------------------------
 
-let private applyGame (msg: Msg) (model: UiModel) : UiModel =
+/// Runs a core message, harvesting notices, sound cues, shot tracers,
+/// celebration effects and the wave banner from the emitted events. Kill
+/// positions come from the pre-transition state (the dead are gone after).
+let private applyGame (msg: Msg) (model: UiModel) : UiModel * SoundCue list =
+    let positionsBefore =
+        model.Game.Enemies
+        |> List.map (fun e -> e.Id, Enemy.positionOn model.Game.Path e)
+        |> Map.ofList
+
+    let goalPos =
+        match List.tryLast (Path.waypoints model.Game.Path) with
+        | Some p -> p
+        | None -> 0.0, 0.0 // unreachable: a Path always has ≥ 2 waypoints
+
     let game, events = update msg model.Game
 
     let notice =
         match noticeFor events with
-        | Some text -> Some(text, noticeTtl)
+        | Some(text, kind) -> Some(text, kind, noticeTtl)
         | None -> model.Notice
 
     let newShots =
@@ -174,41 +265,81 @@ let private applyGame (msg: Msg) (model: UiModel) : UiModel =
                       Ttl = shotTtl }
             | _ -> None)
 
+    let born kind pos = { Kind = kind; Pos = pos; Age = 0.0 }
+
+    let newEffects =
+        events
+        |> List.collect (fun event ->
+            match event with
+            | EnemyKilled(id, bounty) ->
+                match Map.tryFind id positionsBefore with
+                | Some pos -> [ born KillBurst pos; born (GoldFloat(sprintf "+%d" bounty)) pos ]
+                | None -> []
+            | TowersMerged(_, _, _, at) -> [ born MergeRing (Coord.center at) ]
+            | TowerBought(_, at, cost) ->
+                [ born SpawnRing (Coord.center at)
+                  born (GoldFloat(sprintf "-%d" cost)) (Coord.center at) ]
+            | TowerSpawned(_, at) -> [ born SpawnRing (Coord.center at) ]
+            | LifeLost _ -> [ born LeakFlash goalPos ]
+            | WaveCompleted(_, bonus) -> [ born (GoldFloat(sprintf "+%d" bonus)) goalPos ]
+            | _ -> [])
+
+    let banner =
+        events
+        |> List.tryPick (fun event ->
+            match event with
+            | WaveStarted wave -> Some(wave, 0.0)
+            | _ -> None)
+        |> Option.orElse model.Banner
+
+    let cues =
+        if model.Muted then
+            []
+        else
+            events |> List.choose cueOf |> List.distinct
+
     { model with
         Game = game
         Notice = notice
-        Shots = newShots @ model.Shots }
+        Shots = newShots @ model.Shots
+        Effects = newEffects @ model.Effects
+        Banner = banner },
+    cues
 
-let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
+let updateUi (msg: UiMsg) (model: UiModel) : UiModel * SoundCue list =
     match msg with
     | GameMsg gameMsg -> applyGame gameMsg model
 
     | PointerMoved(hover, pointer) ->
         { model with
             Hover = hover
-            Pointer = pointer }
+            Pointer = pointer },
+        []
 
     | Buy towerType ->
         match firstEmptyCell model.Game.Grid with
         | Some cell -> applyGame (BuyTower(towerType, cell)) model
         | None ->
             { model with
-                Notice = Some("No empty cell for a new tower.", noticeTtl) }
+                Notice = Some("No empty cell for a new tower.", Bad, noticeTtl) },
+            (if model.Muted then [] else [ RejectCue ])
 
-    | Restart -> init (Grid.size model.Game.Grid)
+    | Restart -> init (Grid.size model.Game.Grid), []
+
+    | ToggleMute -> { model with Muted = not model.Muted }, []
 
     | Frame dt ->
         let seconds = DeltaTime.seconds dt
 
         // 1. Advance the core simulation with the injected time step.
-        let model = applyGame (Tick dt) model
+        let model, cues = applyGame (Tick dt) model
 
-        // 2. Fade the transient HUD notice and the shot tracers.
+        // 2. Age and prune all transient visuals.
         let notice =
             model.Notice
-            |> Option.bind (fun (text, ttl) ->
+            |> Option.bind (fun (text, kind, ttl) ->
                 let ttl' = ttl - seconds
-                if ttl' <= 0.0 then None else Some(text, ttl'))
+                if ttl' <= 0.0 then None else Some(text, kind, ttl'))
 
         let shots =
             model.Shots
@@ -216,6 +347,22 @@ let updateUi (msg: UiMsg) (model: UiModel) : UiModel =
                 let ttl' = shot.Ttl - seconds
                 if ttl' <= 0.0 then None else Some { shot with Ttl = ttl' })
 
+        let effects =
+            model.Effects
+            |> List.choose (fun effect ->
+                let age' = effect.Age + seconds
+                if age' >= effectDuration effect.Kind then None else Some { effect with Age = age' })
+
+        let banner =
+            model.Banner
+            |> Option.bind (fun (wave, age) ->
+                let age' = age + seconds
+                if age' >= bannerDuration then None else Some(wave, age'))
+
         { model with
             Notice = notice
-            Shots = shots }
+            Shots = shots
+            Effects = effects
+            Banner = banner
+            Clock = model.Clock + seconds },
+        cues

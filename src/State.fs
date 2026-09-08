@@ -55,19 +55,20 @@ type GameStatus =
 /// player earns for surviving it. Pure functions of the wave number.
 module Waves =
     /// Seconds before the very first wave.
-    let initialDelay = 5.0
+    let initialDelay = 6.0
 
-    /// Seconds between clearing a wave and the next one starting.
-    let interWaveDelay = 4.0
+    /// Seconds between clearing a wave and the next one starting (the
+    /// merge/shopping window; CallNextWave skips it).
+    let interWaveDelay = 6.0
 
     /// Seconds between spawns within a wave; tightens as waves progress.
     let spawnInterval (wave: int) = max 0.45 (1.1 - 0.04 * float wave)
 
     /// Enemy health scales linearly with the wave number.
-    let healthMultiplier (wave: int) = 1.0 + 0.18 * float (max 1 wave - 1)
+    let healthMultiplier (wave: int) = 1.0 + 0.15 * float (max 1 wave - 1)
 
     /// Gold awarded for clearing a wave.
-    let completionBonus (wave: int) = 20 + 5 * wave
+    let completionBonus (wave: int) = 25 + 5 * wave
 
     /// Spawn order for a wave. Never empty: every wave has at least four
     /// grunts, so entering Spawning with an empty queue is unrepresentable
@@ -96,7 +97,7 @@ type GameState =
       TowersBought: int
       Status: GameStatus }
 
-let startingGold = 110
+let startingGold = 120
 let startingLives = 10
 let towerBaseCost = 20
 let towerCostGrowth = 4
@@ -134,6 +135,7 @@ type RejectReason =
     | SpawnWhileDragging
     | NotEnoughGold of required: int
     | UnknownEnemy of EnemyId
+    | WaveAlreadyRunning
     | GameAlreadyOver
 
 /// Facts about what a transition did — the UI renders these; tests assert on
@@ -165,6 +167,7 @@ type Msg =
     | Drop of Coord
     | CancelDrag
     | BuyTower of TowerType * Coord
+    | CallNextWave
     | Tick of DeltaTime
     | SpawnTower of TowerType * Coord
     | SpawnEnemy of EnemyType
@@ -237,6 +240,20 @@ let rec private drainSpawns (state: GameState) (events: GameEvent list) =
     | Spawning([], _) -> withPhase WaveActive state, events
     | _ -> state, events
 
+/// Starts the next wave immediately. spawnCredit ≤ 0 rolls countdown
+/// overshoot into the first spawns, so wave timing does not depend on tick
+/// granularity; CallNextWave passes 0.0.
+let private startWave (spawnCredit: float) (state: GameState) =
+    let number = state.Wave.Number + 1
+
+    let state =
+        { state with
+            Wave =
+                { Number = number
+                  Phase = Spawning(Waves.composition number, spawnCredit) } }
+
+    drainSpawns state [ WaveStarted number ]
+
 let private stepWave (dtSeconds: float) (state: GameState) =
     match state.Wave.Phase with
     | WaveActive -> state, []
@@ -246,25 +263,15 @@ let private stepWave (dtSeconds: float) (state: GameState) =
         if remaining > 0.0 then
             withPhase (BetweenWaves remaining) state, []
         else
-            let number = state.Wave.Number + 1
-
-            let state =
-                { state with
-                    Wave =
-                        { Number = number
-                          // The overshoot becomes spawn credit, so wave
-                          // timing does not depend on tick granularity.
-                          Phase = Spawning(Waves.composition number, remaining) } }
-
-            drainSpawns state [ WaveStarted number ]
+            startWave remaining state
     | Spawning(pending, untilNext) -> drainSpawns (withPhase (Spawning(pending, untilNext - dtSeconds)) state) []
 
 /// Moves every enemy; goal-reachers cost lives and may end the game.
 let private stepMovement (dt: DeltaTime) (state: GameState) =
     let folder (survivors, status, events) (enemy: Enemy) =
-        match Enemy.advance state.Path dt enemy with
-        | Moved progress -> { enemy with Progress = progress } :: survivors, status, events
-        | ReachedGoal ->
+        match Enemy.step state.Path dt enemy with
+        | Walking enemy' -> enemy' :: survivors, status, events
+        | AtGoal ->
             let events = events @ [ EnemyReachedGoal enemy.Id ]
 
             match status with
@@ -319,8 +326,17 @@ let private stepCombat (dtSeconds: float) (state: GameState) =
 
                     match AttackResult.ofDamage (Tower.attackDamage tower) target.Health with
                     | Survived remaining ->
+                        // Survivors keep the wound — and, from slowing
+                        // towers, a refreshed movement debuff.
+                        let wounded (e: Enemy) =
+                            let hit = { e with Health = remaining }
+
+                            match stats.Slow with
+                            | Some(factor, seconds) -> Enemy.applySlow factor seconds hit
+                            | None -> hit
+
                         enemies
-                        |> List.map (fun e -> if e.Id = target.Id then { e with Health = remaining } else e),
+                        |> List.map (fun e -> if e.Id = target.Id then wounded e else e),
                         gold,
                         resets,
                         events @ [ fired; EnemyDamaged(target.Id, remaining) ]
@@ -377,6 +393,14 @@ let private updatePlaying (msg: Msg) (state: GameState) : GameState * GameEvent 
         let state3, events3 = stepCombat dtSeconds state2
         let state4, events4 = checkWaveCompletion state3
         state4, events1 @ events2 @ events3 @ events4
+
+    // -- calling the next wave early ----------------------------------------
+
+    | CallNextWave, _ ->
+        match state.Wave.Phase with
+        | BetweenWaves _ -> startWave 0.0 state
+        | Spawning _
+        | WaveActive -> state, [ ActionRejected WaveAlreadyRunning ]
 
     // -- drag & drop / merge ------------------------------------------------
 

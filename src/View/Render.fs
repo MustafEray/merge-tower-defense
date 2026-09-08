@@ -45,14 +45,21 @@ let private enemyColor (enemyType: EnemyType) =
 // ---------------------------------------------------------------------------
 
 /// Draw order, bottom to top: static board, overlay (highlights + ranges),
-/// towers, enemies, shot tracers, drag ghost.
+/// towers, enemies, shot tracers, celebration effects, drag ghost, floating
+/// gold texts, wave banner. The Text objects are a fixed pool created once —
+/// per-frame allocation would churn canvas textures.
 type Layers =
     { Static: Graphics
       Overlay: Graphics
       Towers: Graphics
       Enemies: Graphics
       Shots: Graphics
-      Ghost: Graphics }
+      Effects: Graphics
+      Ghost: Graphics
+      Floats: Text []
+      Banner: Text }
+
+let private floatPoolSize = 10
 
 let createLayers (app: Application) : Layers =
     let make () =
@@ -60,12 +67,55 @@ let createLayers (app: Application) : Layers =
         app.stage.addChild g |> ignore
         g
 
-    { Static = make ()
-      Overlay = make ()
-      Towers = make ()
-      Enemies = make ()
-      Shots = make ()
-      Ghost = make () }
+    let statics = make ()
+    let overlay = make ()
+    let towers = make ()
+    let enemies = make ()
+    let shots = make ()
+    let effects = make ()
+    let ghost = make ()
+
+    let floatStyle =
+        [ "fontFamily", box "system-ui, sans-serif"
+          "fontSize", box 14
+          "fontWeight", box "700"
+          "fill", box "#ffd54f"
+          "stroke", box "#10131f"
+          "strokeThickness", box 3 ]
+
+    let floats =
+        [| for _ in 1 .. floatPoolSize ->
+               let t = createText "" floatStyle
+               t.visible <- false
+               t.anchor.x <- 0.5
+               t.anchor.y <- 0.5
+               app.stage.addChild t |> ignore
+               t |]
+
+    let banner =
+        createText
+            ""
+            [ "fontFamily", box "system-ui, sans-serif"
+              "fontSize", box 36
+              "fontWeight", box "800"
+              "fill", box "#e8eaf1"
+              "stroke", box "#10131f"
+              "strokeThickness", box 6 ]
+
+    banner.visible <- false
+    banner.anchor.x <- 0.5
+    banner.anchor.y <- 0.5
+    app.stage.addChild banner |> ignore
+
+    { Static = statics
+      Overlay = overlay
+      Towers = towers
+      Enemies = enemies
+      Shots = shots
+      Effects = effects
+      Ghost = ghost
+      Floats = floats
+      Banner = banner }
 
 // ---------------------------------------------------------------------------
 // Shared shape helpers
@@ -217,30 +267,46 @@ let private drawRange (g: Graphics) (layout: Layout) (x: float) (y: float) (towe
         .endFill ()
     |> ignore
 
-let private drawEnemy (g: Graphics) (x: float) (y: float) (enemy: Enemy) : unit =
+/// Draws one enemy. `pulse` is a small size multiplier derived from walked
+/// distance, giving a cheap "marching" wobble without any per-enemy state.
+let private drawEnemy (g: Graphics) (x: float) (y: float) (enemy: Enemy) (pulse: float) : unit =
     let color = enemyColor enemy.Type
     g.lineStyle (0.0, 0, 0.0) |> ignore
 
     (match enemy.Type with
-     | Grunt -> g.beginFill(color, 1.0).drawCircle(x, y, 9.0).endFill ()
+     | Grunt -> g.beginFill(color, 1.0).drawCircle(x, y, 9.0 * pulse).endFill ()
      | Runner ->
+         let r = 9.0 * pulse
+
          g
              .beginFill(color, 1.0)
-             .drawPolygon(poly [ x; y - 9.0; x + 8.0; y + 7.0; x - 8.0; y + 7.0 ])
+             .drawPolygon(poly [ x; y - r; x + r * 0.9; y + r * 0.8; x - r * 0.9; y + r * 0.8 ])
              .endFill ()
      | Tank ->
+         let half = 10.0 * pulse
+
          g
              .beginFill(color, 1.0)
-             .drawRoundedRect(x - 10.0, y - 10.0, 20.0, 20.0, 4.0)
+             .drawRoundedRect(x - half, y - half, half * 2.0, half * 2.0, 4.0)
              .endFill ()
      | Boss ->
          g
              .beginFill(color, 1.0)
-             .drawCircle(x, y, 15.0)
+             .drawCircle(x, y, 15.0 * pulse)
              .endFill()
              .lineStyle(2.0, 0xe1bee7, 1.0)
-             .drawCircle(x, y, 19.0))
+             .drawCircle(x, y, 19.0 * pulse))
     |> ignore
+
+    // Frost's slow debuff: an icy ring around the victim.
+    (match enemy.Slow with
+     | Some _ ->
+         g
+             .lineStyle(2.0, 0x81d4fa, 0.8)
+             .drawCircle(x, y, 13.0 * pulse)
+             .lineStyle (0.0, 0, 0.0)
+         |> ignore
+     | None -> ())
 
     // Health bar: current versus the type's unscaled base (waves scale
     // health up, so late-wave enemies can show a "over-full" bar clamped
@@ -286,6 +352,7 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
     layers.Towers.clear () |> ignore
     layers.Enemies.clear () |> ignore
     layers.Shots.clear () |> ignore
+    layers.Effects.clear () |> ignore
     layers.Ghost.clear () |> ignore
 
     let cell = layout.CellSize
@@ -342,10 +409,16 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
         let x, y = cellCenter layout coord
         drawTowerShape layers.Towers x y tower 1.0
 
-    // Enemies along the path.
+    // Enemies along the path, with a subtle march wobble derived from the
+    // distance they have walked (pure function of progress — no state).
     for enemy in model.Game.Enemies do
         let x, y = toPx layout (Enemy.positionOn path enemy)
-        drawEnemy layers.Enemies x y enemy
+
+        let pulse =
+            1.0
+            + 0.05 * sin (PathProgress.value enemy.Progress * Path.length path * 8.0)
+
+        drawEnemy layers.Enemies x y enemy pulse
 
     // Shot tracers, fading with their remaining ttl.
     for shot in model.Shots do
@@ -362,6 +435,96 @@ let drawFrame (layout: Layout) (model: UiModel) (layers: Layers) : unit =
             .drawCircle(tx, ty, 3.5)
             .endFill ()
         |> ignore
+
+    // Spawn portal pulse (ambient, driven by the pure UI clock).
+    (match Path.waypoints path with
+     | (sx, sy) :: _ ->
+         let px, py = toPx layout (sx, sy)
+         let throb = sin (model.Clock * 3.0)
+
+         layers.Effects
+             .lineStyle(2.0, 0x66bb6a, 0.3 + 0.2 * throb)
+             .drawCircle(px, py, 16.0 + 2.0 * throb)
+             .lineStyle (0.0, 0, 0.0)
+         |> ignore
+     | [] -> ())
+
+    // Celebration effects (rings, bursts, leak flashes).
+    for effect in model.Effects do
+        let t = effect.Age / effectDuration effect.Kind
+        let x, y = toPx layout effect.Pos
+        let fade = max 0.0 (1.0 - t)
+        let g = layers.Effects
+
+        match effect.Kind with
+        | KillBurst ->
+            g.lineStyle (2.5, 0xffcc80, 0.9 * fade) |> ignore
+            g.drawCircle (x, y, 4.0 + t * 18.0) |> ignore
+            g.lineStyle (0.0, 0, 0.0) |> ignore
+
+            for i in 0 .. 5 do
+                let angle = float i / 6.0 * 6.28318
+                let r = 6.0 + t * 22.0
+
+                g
+                    .beginFill(0xffe0b2, 0.8 * fade)
+                    .drawCircle(x + cos angle * r, y + sin angle * r, 2.0)
+                    .endFill ()
+                |> ignore
+        | MergeRing ->
+            g
+                .lineStyle(3.0, 0x66bb6a, fade)
+                .drawCircle(x, y, 6.0 + t * layout.CellSize * 0.65)
+                .lineStyle (0.0, 0, 0.0)
+            |> ignore
+        | SpawnRing ->
+            g
+                .lineStyle(2.5, 0x42a5f5, fade)
+                .drawCircle(x, y, 4.0 + t * layout.CellSize * 0.45)
+                .lineStyle (0.0, 0, 0.0)
+            |> ignore
+        | LeakFlash ->
+            g
+                .lineStyle(3.0, 0xef5350, fade)
+                .drawCircle(x, y, 10.0 + t * 26.0)
+                .lineStyle (0.0, 0, 0.0)
+            |> ignore
+        | GoldFloat _ -> () // handled by the text pool below
+
+    // Floating gold texts, assigned to the fixed Text pool.
+    let floats =
+        model.Effects
+        |> List.choose (fun e ->
+            match e.Kind with
+            | GoldFloat text -> Some(text, e.Pos, e.Age, effectDuration e.Kind)
+            | _ -> None)
+
+    layers.Floats
+    |> Array.iteri (fun i t ->
+        match List.tryItem i floats with
+        | Some(text, pos, age, duration) ->
+            let x, y = toPx layout pos
+
+            if t.text <> text then t.text <- text
+            t.position.x <- x
+            t.position.y <- y - 12.0 - age * 26.0
+            t.alpha <- max 0.0 (1.0 - age / duration)
+            t.visible <- true
+        | None -> t.visible <- false)
+
+    // Wave banner, centred over the grid, fading in and out.
+    (match model.Banner with
+     | Some(wave, age) ->
+         let n = float (GridSize.value (Grid.size model.Game.Grid))
+         let x, y = toPx layout (n / 2.0, n * 0.42)
+         let text = sprintf "Wave %d" wave
+
+         if layers.Banner.text <> text then layers.Banner.text <- text
+         layers.Banner.position.x <- x
+         layers.Banner.position.y <- y
+         layers.Banner.alpha <- max 0.0 (min (age / 0.25) (min 1.0 ((bannerDuration - age) / 0.5)))
+         layers.Banner.visible <- true
+     | None -> layers.Banner.visible <- false)
 
     // Drag ghost follows the raw pointer position.
     match model.Game.Interaction, model.Pointer with

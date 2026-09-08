@@ -73,9 +73,22 @@ olmadan geçilmez.
 - Aşama 2'nin UI placeholder'ları (altın/dalga) ve demo düşman üreteci
   kaldırıldı; ekonomi ve dalgalar artık çekirdekte.
 
-### Aşama 4 — Cila (Gün 11–12)
+### Aşama 4 — Cila (Gün 11–12) ✅ TAMAMLANDI
 
-- Animasyon, ses, UI/UX iyileştirmeleri, oyun dengesi ayarları.
+- Animasyon: saf `Effect` listesi (ölüm patlaması, merge/spawn halkaları,
+  sızıntı flaşı, altın uçuş metinleri), "Wave N" afişi, portal nabzı ve
+  düşman yürüyüş salınımı (progress'ten türetilir, durumsuz). Metinler
+  sabit bir Pixi `Text` havuzuyla çizilir (kare başına alloc yok).
+- Ses: `SoundCue` saf veri olarak `updateUi`'den döner; `Interop/Audio.fs`
+  WebAudio osilatörleriyle sentezler (asset yok). Mute: HUD düğmesi + M.
+- UI/UX: "Call Wave Now" (çekirdekte `CallNextWave` mesajı), Esc ile drag
+  iptali, imleç geri bildirimi (grab/grabbing), renk kodlu bildirimler
+  (`NoticeKind`).
+- Denge: Frost'a vuruşta yavaşlatma (`SlowEffect`, süre seviyeyle artar;
+  yenileme, yığılma yok), Cannon'a tank-kırıcı rolü (14 hasar), bounty ve
+  bonus artışları, daha yumuşak can eğrisi, 6 sn'lik dalga arası alışveriş
+  penceresi. Denge, simülasyon testleriyle korunur (savunmasız tahta
+  kaybeder; mütevazı açılış 1. dalgayı kayıpsız temizler).
 
 ### Aşama 5 — Mobil Paketleme (Gün 13–14)
 
@@ -88,10 +101,11 @@ olmadan geçilmez.
 |---|---|
 | `src/Shared.fs` | Domain tipleri: kimlikler, `TowerLevel`, `TowerType`, `Tower`, `GridSize`, `Coord`, `Grid`, `Health`, `Damage`, `Gold`, `Lives`, `DeltaTime`, `PathProgress`, `Path`, `EnemyType`, `Enemy` ve saf yardımcıları |
 | `src/State.fs` | Durum makinesi: `Interaction`, `WavePhase`/`WaveState`, `GameStatus`, `Waves` (zorluk eğrisi), `GameState`, `Msg`, `GameEvent`, `RejectReason`, `previewDrop`, tick hattı (dalga→hareket/can→savaş→dalga sonu), `update` |
-| `src/Ui.fs` | Saf UI katmanı: `Layout` (path sınırlarından türetilen canvas geometrisi + hit test), `UiModel` (hover/ghost/notice/atış izleri), `UiMsg`, `updateUi` |
-| `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri (yalnızca kullanılan yüzey) |
+| `src/Ui.fs` | Saf UI katmanı: `Layout` (path sınırlarından türetilen canvas geometrisi + hit test), `UiModel` (hover/ghost/notice/atış izleri/efektler/afiş/mute), `UiMsg`, `SoundCue`, `updateUi : UiMsg -> UiModel -> UiModel * SoundCue list` |
+| `src/Interop/Pixi.fs` | Minimal el yazımı PixiJS v7 binding'leri (yalnızca kullanılan yüzey; `Text` dahil) |
 | `src/Interop/React.fs` | Minimal React 18 binding'leri + Feliz-vari HTML DSL |
-| `src/Interop/Dom.fs` | Üç DOM dokunuşu (getElementById/appendChild/globalThis) |
+| `src/Interop/Dom.fs` | Dört DOM dokunuşu (getElementById/appendChild/globalThis/onKeyDown) |
+| `src/Interop/Audio.fs` | WebAudio ile prosedürel ses sentezi (`SoundCue` → osilatör blip'leri) |
 | `src/View/Render.fs` | Prosedürel çizim: grid, kuleler (tip=şekil, seviye=boy/ton/pip), düşmanlar, menzil daireleri, drop önizleme, drag ghost |
 | `src/View/Hud.fs` | React HUD: altın/dalga/düşman sayacı, satın alma butonu, bildirim satırı |
 | `src/App.fs` | Kompozisyon kökü (tek impure modül): Pixi app, ticker→`Frame dt`, pointer→`Msg`, mini-MVU döngüsü, e2e debug kancası |

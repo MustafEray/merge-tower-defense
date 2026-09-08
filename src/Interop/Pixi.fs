@@ -19,6 +19,8 @@ type Container =
     abstract addChild: child: Container -> Container
     abstract removeChildren: unit -> unit
     abstract position: Point
+    abstract alpha: float with get, set
+    abstract visible: bool with get, set
     abstract eventMode: string with get, set
     abstract hitArea: obj with get, set
     abstract cursor: string with get, set
@@ -45,6 +47,12 @@ type Ticker =
     abstract maxFPS: float with get, set
     abstract add: callback: (float -> unit) -> Ticker
 
+/// Canvas-rendered text (procedural: no font assets, system fonts only).
+type Text =
+    inherit Container
+    abstract text: string with get, set
+    abstract anchor: Point
+
 type Application =
     abstract stage: Container
     /// The HTMLCanvasElement Pixi renders into.
@@ -62,6 +70,9 @@ let createGraphics () : Graphics = createNew pixi?Graphics () |> unbox
 
 let createRectangle (x: float) (y: float) (width: float) (height: float) : obj =
     createNew pixi?Rectangle (x, y, width, height)
+
+let createText (content: string) (style: (string * obj) list) : Text =
+    createNew pixi?Text (content, createObj style) |> unbox
 
 /// Canvas-space pointer position of a federated pointer event.
 let pointerPosition (event: obj) : float * float =

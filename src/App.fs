@@ -60,13 +60,16 @@ let private start () =
          | Playing lives -> Lives.value lives
          | Defeated _ -> -1),
         List.length m.Game.Enemies,
-        Option.map fst m.Notice,
+        (m.Notice |> Option.map (fun (text, _, _) -> text)),
         canBuy m,
-        nextTowerCost m.Game
+        nextTowerCost m.Game,
+        m.Muted
 
     let rec dispatch (msg: UiMsg) : unit =
         let before = hudProjection model
-        model <- updateUi msg model
+        let model', cues = updateUi msg model
+        model <- model'
+        cues |> List.iter Audio.play
 
         if hudProjection model <> before then
             hudRoot.render (Hud.view model dispatch)
@@ -95,8 +98,29 @@ let private start () =
         fun event ->
             let cell, pos = cellUnder event
             dispatch (PointerMoved(cell, Some pos))
+
+            // Cursor feedback: grabbing while dragging, grab over a tower.
+            stage.cursor <-
+                match model.Game.Interaction, cell with
+                | Dragging _, _ -> "grabbing"
+                | Idle, Some coord ->
+                    match Grid.cellAt coord model.Game.Grid with
+                    | Occupied _ -> "grab"
+                    | Empty -> "default"
+                | Idle, None -> "default"
     )
     |> ignore
+
+    // Keyboard shortcuts: Esc cancels a drag, M toggles sound.
+    Dom.onKeyDown (fun event ->
+        match unbox<string> event?key with
+        | "Escape" ->
+            match model.Game.Interaction with
+            | Dragging _ -> dispatch (GameMsg CancelDrag)
+            | Idle -> ()
+        | "m"
+        | "M" -> dispatch ToggleMute
+        | _ -> ())
 
     stage.on (
         "pointerup",
@@ -152,6 +176,7 @@ let private start () =
                       | Defeated _ -> "defeated"
                   )
                   "enemies", box (List.length model.Game.Enemies)
+                  "muted", box model.Muted
                   "dragging",
                   box (
                       match model.Game.Interaction with
